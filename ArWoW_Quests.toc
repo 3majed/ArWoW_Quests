@@ -1,0 +1,19 @@
+﻿## Interface: 30300
+## Title: ArWoW_Quests
+## Version: 0.1
+## Author: Majed
+## DefaultState: Enabled
+## LoadOnDemand: 0
+## SavedVariables: QTR_PS, QTR_SAVED, QTR_GOSSIP
+## SavedVariablesPerCharacter: QTR_PC
+
+QuestData_AR_wotlk.lua
+QuestList.lua
+Gossip_AR.lua
+TutorialsData_AR.lua
+
+
+Arabic_Reshaper.lua
+
+ArWoW_Quests.lua
+ArWoW_QuestsFrames.xml
