@@ -8,12 +8,16 @@ local QTR_version = "3.06";
 local QTR_name = UnitName("player");
 local QTR_class= UnitClass("player");
 local QTR_race = UnitRace("player");
-local QTR_sex = UnitSex("player");     -- 1:neutral,  2:męski,  3:żeński
+local QTR_sex = UnitSex("player");     -- 1:neutral, 2:male, 3:female
 local QTR_event="";
 local QTR_waitTable = {};
 local QTR_waitFrame = nil;
 local QTR_GossipButtonsEN = {};
 local QTR_GossipButtonsAR = {};
+local QTR_QuestGreetingButtonsEN = {};
+local QTR_QuestGreetingButtonsAR = {};
+local QTR_QuestGreetingHash = 0;
+local QTR_QuestGreetingState = "0";
 local QTR_WorldMapRetryPending = false;
 local QTR_UpdateWorldMapRewards;
 local QTR_RestoreWorldMapRewards;
@@ -124,9 +128,9 @@ function Spr_Gender(msg)
                nr_3 = nr_3 + 1;
             end
             if (string.sub(msg, nr_3, nr_3) == ")") then
-               if (QTR_sex==3) then        -- forma żeńska
+               if (QTR_sex==3) then        -- feminine form
                   QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
-               else                        -- forma męska
+               else                        -- masculine form
                   QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
                end
                msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
@@ -139,7 +143,8 @@ function Spr_Gender(msg)
 end
 
 
-local function StringHash(text)           -- funkcja tworząca Hash (32-bitowa liczba) podanego tekstu
+-- Compute a stable text hash used for gossip and lookup caches.
+local function StringHash(text)           -- a function that creates a Hash (32-bit number) of the given text
   local counter = 1;
   local pomoc = 0;
   local dlug = string.len(text);
@@ -156,6 +161,7 @@ local function StringHash(text)           -- funkcja tworząca Hash (32-bitowa l
 end
 
 
+-- Reverse Arabic text only when the content actually needs RTL shaping.
 local function QTR_ReverseText(text)
   if (not text or text == "") then
      return text or "";
@@ -167,6 +173,7 @@ local function QTR_ReverseText(text)
 end
 
 
+-- Wrap and reverse a text block line by line for right-to-left rendering.
 local function QTR_LineReverse(text, limit)
   local retstr = "";
   if (text and limit) then
@@ -200,6 +207,7 @@ local function QTR_LineReverse(text, limit)
 end
 
 
+-- Normalize multiline quest text before feeding it into the RTL line shaper.
 local function QTR_ReverseBodyText(text, limit)
   if (not text or text == "") then
      return text or "";
@@ -214,6 +222,7 @@ local function QTR_ReverseBodyText(text, limit)
 end
 
 
+-- Apply fonts, alignment, and Arabic shaping through one shared display helper.
 local function QTR_SetShapedText(fontString, text, fontName, fontSize, limit)
   fontString:SetFont(fontName, fontSize);
   if (text and AS_ContainsArabic and AS_ContainsArabic(text)) then
@@ -230,6 +239,7 @@ local function QTR_SetShapedText(fontString, text, fontName, fontSize, limit)
 end
 
 
+-- Reverse UTF-8 text with the reshaper helper, or fall back to raw reversal.
 local function QTR_ReverseUTF8Text(text)
   if (not text or text == "") then
      return text or "";
@@ -241,6 +251,7 @@ local function QTR_ReverseUTF8Text(text)
 end
 
 
+-- Detect legacy reversed Latin words so mixed titles do not get flipped twice.
 local function QTR_IsLegacyReversedLatinTitle(text)
   if (not text or text == "") then
      return false;
@@ -261,6 +272,7 @@ local function QTR_IsLegacyReversedLatinTitle(text)
 end
 
 
+-- Normalize translated quest titles that mix Arabic with Latin tokens.
 local function QTR_NormalizeTranslatedTitle(text)
   if (not text or text == "") then
      return text or "";
@@ -282,6 +294,7 @@ local function QTR_NormalizeTranslatedTitle(text)
 end
 
 
+-- Fetch, expand, and normalize a translated quest title by quest ID.
 local function QTR_GetTranslatedQuestTitleById(questId)
   if (questId and QTR_QuestData[questId] and QTR_QuestData[questId]["Title"]) then
      return QTR_NormalizeTranslatedTitle(QTR_ExpandUnitInfo(QTR_QuestData[questId]["Title"]));
@@ -290,6 +303,7 @@ local function QTR_GetTranslatedQuestTitleById(questId)
 end
 
 
+-- Expand player, race, class, and gender placeholders inside gossip text.
 local function QTR_ExpandGossipInfo(msg)
   if (not msg or msg == "") then
      return msg or "";
@@ -328,6 +342,7 @@ local function QTR_ExpandGossipInfo(msg)
 end
 
 
+-- Prepare gossip text for display, including wrapping for Arabic buttons.
 local function QTR_PrepareGossipDisplayText(msg, width, fontSize)
   local expanded = QTR_ExpandGossipInfo(msg);
   if (expanded == "") then
@@ -342,21 +357,81 @@ local function QTR_PrepareGossipDisplayText(msg, width, fontSize)
 end
 
 
+local QTR_GossipWrapWarmupDone = false;
+
+
+local function QTR_PrepareShownGossipDisplayText(msg, width, fontSize)
+   if (not QTR_GossipWrapWarmupDone) then
+       QTR_GossipWrapWarmupDone = true;
+       QTR_PrepareGossipDisplayText(msg, width, fontSize);
+   end
+
+   return QTR_PrepareGossipDisplayText(msg, width, fontSize);
+end
+
+
+-- Normalize live gossip text into the same hash source used by the database.
+local function QTR_NormalizeGossipHashText(text)
+   local hashText = text or "";
+   hashText = string.gsub(hashText, '\r', '');
+   hashText = string.gsub(hashText, '\n', '$B');
+   hashText = string.gsub(hashText, QTR_name, '$N');
+   hashText = string.gsub(hashText, string.upper(QTR_name), '$N$');
+   hashText = string.gsub(hashText, QTR_race, '$R');
+   hashText = string.gsub(hashText, string.lower(QTR_race), '$R');
+   hashText = string.gsub(hashText, QTR_class, '$C');
+   hashText = string.gsub(hashText, string.lower(QTR_class), '$C');
+   hashText = string.gsub(hashText, '$N$', '');
+   hashText = string.gsub(hashText, '$N', '');
+   hashText = string.gsub(hashText, '$B', '');
+   hashText = string.gsub(hashText, '$R', '');
+   hashText = string.gsub(hashText, '$C', '');
+   return hashText;
+end
+
+
+-- Apply translated text and alignment rules to a quest or gossip title button.
+local QTR_TitleButtonAnchorCache = {};
+
+
 local function QTR_SetTitleButtonText(titleButton, text, fontName, fontSize)
   titleButton:SetText(text or "");
 
   local fontString = titleButton:GetFontString();
   if (fontString) then
      fontString:SetFont(fontName, fontSize);
+     local isQuestTitleButton = titleButton:GetName() and string.find(titleButton:GetName(), "^QuestTitleButton");
+
+     if (isQuestTitleButton and not QTR_TitleButtonAnchorCache[titleButton]) then
+        local pointCount = fontString:GetNumPoints();
+        local savedPoints = {};
+        for index = 1, pointCount do
+           savedPoints[index] = { fontString:GetPoint(index) };
+        end
+        QTR_TitleButtonAnchorCache[titleButton] = savedPoints;
+     end
+
      if (text and AS_ContainsArabic and AS_ContainsArabic(text)) then
         fontString:SetJustifyH("RIGHT");
+        if (isQuestTitleButton) then
+           fontString:ClearAllPoints();
+           fontString:SetPoint("TOPLEFT", titleButton, "TOPLEFT", 0, 0);
+           fontString:SetPoint("TOPRIGHT", titleButton, "TOPRIGHT", -10, 0);
+        end
      else
         fontString:SetJustifyH("LEFT");
+        if (isQuestTitleButton and QTR_TitleButtonAnchorCache[titleButton]) then
+           fontString:ClearAllPoints();
+           for _, pointData in ipairs(QTR_TitleButtonAnchorCache[titleButton]) do
+              fontString:SetPoint(unpack(pointData));
+           end
+        end
      end
   end
 end
 
 
+-- Measure the usable width for wrapped gossip options after icon padding.
 local function QTR_GetGossipOptionWidth(titleButton)
   local optionWidth = titleButton:GetWidth();
   local buttonIcon = _G[titleButton:GetName() .. "GossipIcon"];
@@ -370,6 +445,7 @@ local function QTR_GetGossipOptionWidth(titleButton)
 end
 
 
+-- Measure the usable width for quest title buttons after icon padding.
 local function QTR_GetQuestButtonWidth(titleButton)
   local optionWidth = titleButton:GetWidth();
   local buttonIcon = _G[titleButton:GetName() .. "QuestIcon"];
@@ -383,6 +459,7 @@ local function QTR_GetQuestButtonWidth(titleButton)
 end
 
 
+-- Pick the best translated title for a quest list entry with possible duplicate IDs.
 local function QTR_GetQuestTitleTranslation(titleText)
   if (not titleText or titleText == "") then
      return nil;
@@ -416,6 +493,7 @@ local function QTR_GetQuestTitleTranslation(titleText)
 end
 
 
+-- Initialize saved variables and restore persisted addon settings.
 function QTR_CheckVars()
   if (not QTR_PS) then
      QTR_PS = {};
@@ -477,8 +555,10 @@ function QTR_CheckVars()
   if ( QTR_PS["isGetQuestID"] ) then
      isGetQuestID=QTR_PS["isGetQuestID"];
   end;
-  QTR_GS = {};       -- tablica na teksty oryginalne
+  QTR_GS = {};       -- board for original texts
 end
+-- Sync the options UI checkboxes with the current saved settings.
+-- Resolve gender placeholders embedded in translated strings before display.
 
 
 function QTR_SetCheckButtonState()
@@ -495,6 +575,7 @@ function QTR_SetCheckButtonState()
 end
 
 
+-- Build the Blizzard Interface Options panel for this addon.
 function QTR_BlizzardOptions()
   -- Create main frame for information text
   local QTROptions = CreateFrame("FRAME", "QTROptions");
@@ -647,6 +728,7 @@ function QTR_BlizzardOptions()
 end
 
 
+-- Initialize the quest log side panel, buttons, and quest log hooks.
 function QTR_OnLoad1()
   QTR.frame1 = CreateFrame("Frame");
   QTR.frame1:RegisterEvent("ADDON_LOADED");
@@ -692,7 +774,7 @@ function QTR_OnLoad1()
 
   hooksecurefunc("QuestLogTitleButton_OnClick", function() QTR_UpdateQuestInfo() end);
   
-   -- przycisk z nr HASH gossip w QuestMapDetailsScrollFrame
+   -- button with no HASH gossip in QuestMapDetailsScrollFrame
    QTR_ToggleButtonGS = CreateFrame("Button",nil, GossipFrame, "UIPanelButtonTemplate");
    QTR_ToggleButtonGS:SetWidth(230);
    QTR_ToggleButtonGS:SetHeight(20);
@@ -701,9 +783,21 @@ function QTR_OnLoad1()
    QTR_ToggleButtonGS:ClearAllPoints();
    QTR_ToggleButtonGS:SetPoint("TOPLEFT", GossipFrame, "TOPLEFT", 70, -50);
    QTR_ToggleButtonGS:SetScript("OnClick", GS_ON_OFF);
+
+   -- button with HASH gossip in QuestFrame greeting view
+   QTR_ToggleButtonQG = CreateFrame("Button",nil, QuestFrame, "UIPanelButtonTemplate");
+   QTR_ToggleButtonQG:SetWidth(230);
+   QTR_ToggleButtonQG:SetHeight(20);
+   QTR_ToggleButtonQG:SetText("Gossip-Hash=?");
+   QTR_ToggleButtonQG:ClearAllPoints();
+   QTR_ToggleButtonQG:SetPoint("TOPLEFT", QuestFrame, "TOPLEFT", 95, -32);
+   QTR_ToggleButtonQG:SetScript("OnClick", GS_ON_OFF_QUEST);
+   QTR_ToggleButtonQG:Disable();
+   QTR_ToggleButtonQG:Hide();
 end
 
 
+-- Initialize quest dialog, world map, gossip, and tutorial event hooks.
 function QTR_OnLoad2()
   QTR.frame2 = CreateFrame("Frame");
   QTR.frame2:RegisterEvent("QUEST_GREETING");
@@ -726,6 +820,7 @@ function QTR_OnLoad2()
 end
 
 
+-- Refresh translated world map quest text after the selected quest changes.
 function QTR_WorldMapQuestFrameOnMouseUp()
   QTR_event = "WORLD_MAP_OnMouseUp";
   QTR_OnEvent2();
@@ -744,12 +839,14 @@ function QTR_WorldMapQuestFrameOnMouseUp()
 end
 
 
+-- Open the addon options panel from the registered slash commands.
 function QTR_SlashCommand(msg)
   InterfaceOptionsFrame_OpenToCategory(QTROptions);
   RestoreOriginalFonts();
 end
 
 
+-- Finish addon startup once this addon has been loaded by the client.
 function QTR:ADDON_LOADED(_, addon)
    if (addon == "ArWoW_Quests") then
      SlashCmdList["WOWPOPOLSKU_QUESTS"] = function(msg) QTR_SlashCommand(msg); end
@@ -770,6 +867,7 @@ function QTR:ADDON_LOADED(_, addon)
 end
 
 
+-- Refresh the quest log translation pane when the quest log changes.
 function QTR:QUEST_LOG_UPDATE()
   if (QTRFrame1:IsVisible()) then
      QTR_UpdateQuestInfo();
@@ -777,6 +875,7 @@ function QTR:QUEST_LOG_UPDATE()
 end
 
 
+-- Re-apply quest translations when the world map quest detail panel refreshes.
 function QTR:WORLD_MAP_UPDATE()
   if ( WorldMapFrame:IsVisible() ) then
      if (QTR_PS["active"]=="1") then
@@ -803,6 +902,7 @@ function QTR:WORLD_MAP_UPDATE()
 end
 
 
+-- Detect whether GetQuestID can be used safely on this client or server.
 function DetectEmuServer()
   QTR_PS["isGetQuestID"]="0";
   isGetQuestID="0";
@@ -817,6 +917,7 @@ function DetectEmuServer()
 end
 
 
+-- Queue a delayed callback on a shared frame timer.
 function QTR_wait(delay, func, ...)
   if(type(delay)~="number" or type(func)~="function") then
     return false;
@@ -846,22 +947,33 @@ function QTR_wait(delay, func, ...)
 end
 
 
+-- Translate the quest greeting section headers in the NPC dialog view.
+local QTR_EnsureQuestGreetingWidth;
+local QTR_SetQuestGreetingHeaders;
+
+
 function QTR:QUEST_GREETING()
-  if (QTR_PS["active"]=="1" and QTR_PS["mode"]=="1") then
-     QTR_SetShapedText(CurrentQuestsText, QTR_Messages.currquests, QTR_Font1, 18);
-     QTR_SetShapedText(AvailableQuestsText, QTR_Messages.avaiquests, QTR_Font1, 18);
-  else
-     CurrentQuestsText:SetText(QTR_MessOrig.currquests);
-     CurrentQuestsText:SetFont(Original_Font1, 18);
-     CurrentQuestsText:SetJustifyH("LEFT");
-     AvailableQuestsText:SetText(QTR_MessOrig.avaiquests);
-     AvailableQuestsText:SetFont(Original_Font1, 18);
-     AvailableQuestsText:SetJustifyH("LEFT");
+   QTR_EnsureQuestGreetingWidth();
+
+   if (QTR_PS["active"]=="1" and QTR_PS["mode"]=="1") then
+      QTR_SetQuestGreetingHeaders(true);
+   else
+      QTR_SetQuestGreetingHeaders(false);
+   end
+
+  if (QTR_PS["gossip"] == "1") then
+     QTR_QuestGreeting_Show();
+  elseif (QTR_ToggleButtonQG) then
+     QTR_ToggleButtonQG:Hide();
   end
 end
 
 
+-- Route quest detail events into the addon translation pipeline.
 function QTR:QUEST_DETAIL()
+  if (QTR_ToggleButtonQG) then
+     QTR_ToggleButtonQG:Hide();
+  end
   QTR_event = "QUEST_DETAIL";
   if (isGetQuestID=="0") then
      if ( not QTR_wait(0.5,QTR_OnEvent2) ) then
@@ -873,18 +985,27 @@ function QTR:QUEST_DETAIL()
 end
 
 
+-- Route quest progress events into the addon translation pipeline.
 function QTR:QUEST_PROGRESS()
+   if (QTR_ToggleButtonQG) then
+       QTR_ToggleButtonQG:Hide();
+   end
   QTR_event = "QUEST_PROGRESS";
   QTR_OnEvent2();
 end
 
 
+-- Route quest completion events into the addon translation pipeline.
 function QTR:QUEST_COMPLETE()
+   if (QTR_ToggleButtonQG) then
+       QTR_ToggleButtonQG:Hide();
+   end
   QTR_event = "QUEST_COMPLETE";
   QTR_OnEvent2();
 end
 
 
+-- Translate NPC gossip content when gossip mode is enabled.
 function QTR:GOSSIP_SHOW()
   if (QTR_PS["gossip"] == "1") then
      QTR_Gossip_Show();
@@ -892,6 +1013,7 @@ function QTR:GOSSIP_SHOW()
 end  
     
 
+-- Resolve the active quest ID and apply the correct translated content for the event.
 function QTR_OnEvent2()
   local q_ID = 0;
   local q_title = GetTitleText();
@@ -1007,6 +1129,7 @@ function QTR_OnEvent2()
 end
 
 
+-- Fill and show the separate translated quest dialog window.
 function QTR_ShowFrame2(eventStr, qid)
   QTR_QuestID2:SetText("QuestID: " .. qid);
   QTR_SetShapedText(QTR_QuestDetail2, QTR_Messages.missing, QTR_Font2, 14, QTR_FrameBodyLimit);
@@ -1046,12 +1169,17 @@ function QTR_ShowFrame2(eventStr, qid)
 end
 
 
+-- Hide the separate quest dialog window and run the default cleanup.
 function QTR_Frame2Close()
   QTRFrame2:Hide();
+   if (QTR_ToggleButtonQG) then
+       QTR_ToggleButtonQG:Hide();
+   end
   QuestFrame_OnHide();
 end
 
 
+-- Split a simple delimiter-separated string for legacy quest ID lists.
 function QTR_split(str, c)
   local aCount = 0;
   local array = {};
@@ -1068,6 +1196,7 @@ function QTR_split(str, c)
 end
 
 
+-- Find the last occurrence of a character inside a string.
 function QTR_findlast(source, char)
   if (not source) then
      return 0;
@@ -1083,6 +1212,7 @@ function QTR_findlast(source, char)
 end
 
 
+-- Toggle the translation pane between compact and tall layouts.
 function QTR_ChangeFrameHeight()
   -- normal height of Frame = 425, quest detail = 350
   if (QTR_SizeH == 1) then
@@ -1101,6 +1231,7 @@ function QTR_ChangeFrameHeight()
 end
 
 
+-- Toggle the translation pane between narrow and wide layouts.
 function QTR_ChangeFrameWidth()
   -- normal width of Frame = 350, quest detail = 320
   if (QTR_SizeW == 1) then
@@ -1121,30 +1252,35 @@ function QTR_ChangeFrameWidth()
 end
 
 
+-- Start dragging the quest log translation pane.
 function QTR_OnMouseDown1()
   -- start moving the window
   QTRFrame1:StartMoving();
 end
   
 
+-- Stop dragging the quest log translation pane.
 function QTR_OnMouseUp1()
   -- stop moving the window
   QTRFrame1:StopMovingOrSizing();
 end
 
 
+-- Start dragging the separate quest dialog pane.
 function QTR_OnMouseDown2()
   -- start moving the window
   QTRFrame2:StartMoving();
 end
   
 
+-- Stop dragging the separate quest dialog pane.
 function QTR_OnMouseUp2()
   -- stop moving the window
   QTRFrame2:StopMovingOrSizing();
 end
 
 
+-- Restore Blizzard quest fonts, headings, and reward labels.
 function RestoreOriginalFonts()
   QuestInfoTitleHeader:SetFont(Original_Font1, 18);
    QuestInfoTitleHeader:SetJustifyH("LEFT");
@@ -1194,6 +1330,7 @@ function RestoreOriginalFonts()
 end
 
 
+-- Replace live quest dialog text inside the Blizzard quest frame.
 function QTR_ChangeText_InEvent(QTR_event, str_id)
   if (QTR_PS["transtitle"]=="1") then
    QTR_SetShapedText(QuestInfoTitleHeader, QTR_GetTranslatedQuestTitleById(str_id), QTR_Font1, 18);
@@ -1230,6 +1367,7 @@ function QTR_ChangeText_InEvent(QTR_event, str_id)
 end
 
 
+-- Replace quest log detail text when a translated quest is selected.
 function QTR_ChangeText_OnQuestLog(qid)
   if (QTR_PS["transtitle"]=="1") then
       QTR_SetShapedText(QuestInfoTitleHeader, QTR_GetTranslatedQuestTitleById(qid), QTR_Font1, 18);
@@ -1249,6 +1387,7 @@ function QTR_ChangeText_OnQuestLog(qid)
 end
 
 
+-- Set the gossip greeting text with explicit font and alignment.
 local function QTR_SetGossipGreetingText(text, fontName, fontSize, justify)
    GossipGreetingText:SetText(text or "");
    GossipGreetingText:SetFont(fontName, fontSize);
@@ -1256,6 +1395,72 @@ local function QTR_SetGossipGreetingText(text, fontName, fontSize, justify)
 end
 
 
+-- Set the quest greeting text with explicit font and alignment.
+local function QTR_SetQuestGreetingText(text, fontName, fontSize, justify)
+   if (not GreetingText) then
+      return;
+   end
+
+   GreetingText:SetText(text or "");
+   GreetingText:SetFont(fontName, fontSize);
+   GreetingText:SetJustifyH(justify or "LEFT");
+end
+
+
+local QTR_QuestGreetingTextTargetWidth = 320;
+
+
+QTR_EnsureQuestGreetingWidth = function()
+   if (not GreetingText) then
+      return;
+   end
+
+   local targetWidth = QTR_QuestGreetingTextTargetWidth;
+   local parentFrame = GreetingText:GetParent();
+
+   if (parentFrame and parentFrame.GetWidth) then
+      local parentWidth = parentFrame:GetWidth();
+      if (parentWidth and parentWidth > 0) then
+         targetWidth = math.min(targetWidth, parentWidth - 40);
+      end
+   end
+
+   if (targetWidth < 280) then
+      targetWidth = 280;
+   end
+
+   GreetingText:SetWidth(targetWidth);
+end
+
+
+QTR_SetQuestGreetingHeaders = function(showArabic)
+   if (AvailableQuestsText) then
+      AvailableQuestsText:SetWidth(280);
+   end
+
+   if (showArabic) then
+      if (CurrentQuestsText) then
+         QTR_SetShapedText(CurrentQuestsText, QTR_Messages.currquests, QTR_Font1, 18);
+      end
+      if (AvailableQuestsText) then
+         QTR_SetShapedText(AvailableQuestsText, QTR_Messages.avaiquests, QTR_Font1, 18);
+      end
+   else
+      if (CurrentQuestsText) then
+         CurrentQuestsText:SetText(QTR_MessOrig.currquests);
+         CurrentQuestsText:SetFont(Original_Font1, 18);
+         CurrentQuestsText:SetJustifyH("LEFT");
+      end
+      if (AvailableQuestsText) then
+         AvailableQuestsText:SetText(QTR_MessOrig.avaiquests);
+         AvailableQuestsText:SetFont(Original_Font1, 18);
+         AvailableQuestsText:SetJustifyH("LEFT");
+      end
+   end
+end
+
+
+-- Translate reward labels inside the world map quest detail panel.
 QTR_UpdateWorldMapRewards = function(itemChooseText, itemReceiveText)
    if (QuestMapFrame and QuestMapFrame.DetailsFrame and QuestMapFrame.DetailsFrame.RewardsFrame) then
       local regions = { QuestMapFrame.DetailsFrame.RewardsFrame:GetRegions() };
@@ -1279,6 +1484,7 @@ QTR_UpdateWorldMapRewards = function(itemChooseText, itemReceiveText)
 end
 
 
+-- Restore original reward labels inside the world map quest detail panel.
 QTR_RestoreWorldMapRewards = function()
    if (QuestMapFrame and QuestMapFrame.DetailsFrame and QuestMapFrame.DetailsFrame.RewardsFrame) then
       local regions = { QuestMapFrame.DetailsFrame.RewardsFrame:GetRegions() };
@@ -1306,6 +1512,7 @@ QTR_RestoreWorldMapRewards = function()
 end
 
 
+-- Restore a saved set of gossip or quest button texts.
 local function QTR_RestoreGossipButtons(savedTexts, fontName, fontSize)
    for titleButton, buttonText in pairs(savedTexts) do
       if (titleButton) then
@@ -1315,6 +1522,7 @@ local function QTR_RestoreGossipButtons(savedTexts, fontName, fontSize)
 end
 
 
+-- Force the quest log to redraw its original Blizzard text.
 local function QTR_RestoreQuestLogEnglish()
   if (not QuestLogFrame or not QuestLogFrame:IsVisible()) then
      return;
@@ -1330,6 +1538,7 @@ local function QTR_RestoreQuestLogEnglish()
 end
 
 
+-- Toggle the addon on or off from the quest log button.
 function QTR_ToggleVisibility()
   -- click on QTR button in QuestLogFrame
   if (QTR_PS["active"]=="0") then
@@ -1356,6 +1565,7 @@ function QTR_ToggleVisibility()
 end
 
 
+-- Show the side pane if needed and refresh its selected quest content.
 function QTR_ShowAndUpdateQuestInfo()
   if (not QTR_PS) then
      QTR_CheckVars();
@@ -1370,11 +1580,13 @@ function QTR_ShowAndUpdateQuestInfo()
 end
 
 
+-- Hide the quest log translation pane.
 function QTR_HideQuestInfo()
   QTRFrame1:Hide();
 end
 
 
+-- Load the selected quest into the side translation pane.
 function QTR_UpdateQuestInfo()
   if (QTR_PS["active"]=="0") then
      return;
@@ -1417,16 +1629,112 @@ function QTR_UpdateQuestInfo()
 end
 
 
+-- Switch quest greeting text and buttons between original and translated versions.
+function GS_ON_OFF_QUEST()
+   if (QTR_QuestGreetingHash == 0) then
+      return;
+   end
+
+   QTR_EnsureQuestGreetingWidth();
+
+   if (QTR_QuestGreetingState=="1") then
+      QTR_QuestGreetingState="0";
+      QTR_SetQuestGreetingText(QTR_GS[QTR_QuestGreetingHash], Original_Font2, 13, "LEFT");
+      QTR_SetQuestGreetingHeaders(false);
+      QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsEN, Original_Font2, 13);
+      QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(QTR_QuestGreetingHash).."] EN");
+   else
+      QTR_QuestGreetingState="1";
+      local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[QTR_QuestGreetingHash], GreetingText:GetWidth(), 13);
+      QTR_SetQuestGreetingText(Greeting_AR, QTR_Font2, 13, "RIGHT");
+      QTR_SetQuestGreetingHeaders(true);
+      QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsAR, QTR_Font2, 13);
+      QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(QTR_QuestGreetingHash).."] AR");
+   end
+end
+
+
+-- Hash, look up, save, and apply gossip translations for quest-only NPC greeting windows.
+function QTR_QuestGreeting_Show()
+   if (not QTR_ToggleButtonQG or not GreetingText or not GreetingText:IsVisible()) then
+      if (QTR_ToggleButtonQG) then
+         QTR_ToggleButtonQG:Hide();
+      end
+      return;
+   end
+
+   local Nazwa_NPC = UnitName("npc");
+   local Greeting_Text = GreetingText:GetText();
+   QTR_QuestGreetingHash = 0;
+   QTR_QuestGreetingButtonsEN = {};
+   QTR_QuestGreetingButtonsAR = {};
+   QTR_ToggleButtonQG:Show();
+   QTR_EnsureQuestGreetingWidth();
+
+   if (Nazwa_NPC and Greeting_Text and (string.find(Greeting_Text," ")==nil)) then
+      Nazwa_NPC = string.gsub(Nazwa_NPC, '"', '\"');
+      Greeting_Text = string.gsub(Greeting_Text, '"', '\"');
+
+      local Hash = StringHash(QTR_NormalizeGossipHashText(Greeting_Text));
+      QTR_QuestGreetingHash = Hash;
+      QTR_GS[Hash] = Greeting_Text;
+      if ( GS_Gossip[Hash] ) then
+         QTR_QuestGreetingState = "1";
+         local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[Hash], GreetingText:GetWidth(), 13);
+         QTR_SetQuestGreetingText(Greeting_AR, QTR_Font2, 13, "RIGHT");
+         QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
+         QTR_ToggleButtonQG:Enable();
+      else
+         QTR_QuestGreetingState = "0";
+         QTR_GOSSIP[Nazwa_NPC.."@"..tostring(Hash)] = Greeting_Text.."@"..QTR_name..":"..QTR_race..":"..QTR_class;
+         QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
+         QTR_ToggleButtonQG:Disable();
+      end
+
+      local numQuestButtons = GetNumActiveQuests() + GetNumAvailableQuests();
+      local questButton;
+      for i = 1, numQuestButtons, 1 do
+         questButton = _G["QuestTitleButton"..tostring(i)];
+         if (questButton and questButton:GetText()) then
+            local questText = questButton:GetText();
+            local prefix = "";
+            local suffix = "";
+            if (string.sub(questText, 1, 2) == "|c") then
+               prefix = string.sub(questText, 1, 10);
+               suffix = "|r";
+               questText = string.gsub(questText, prefix, "");
+               questText = string.gsub(questText, suffix, "");
+            end
+
+            local translatedQuestTitle = QTR_GetQuestTitleTranslation(questText);
+            if (translatedQuestTitle) then
+               local questTitleAR = QTR_ReverseText(translatedQuestTitle);
+               local translatedQuestButtonText = prefix .. questTitleAR .. suffix;
+               QTR_QuestGreetingButtonsEN[questButton] = questButton:GetText();
+               QTR_QuestGreetingButtonsAR[questButton] = translatedQuestButtonText;
+               QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font2, 13);
+            end
+         end
+      end
+   else
+      QTR_QuestGreetingState = "0";
+      QTR_ToggleButtonQG:SetText("Gossip-Hash=?");
+      QTR_ToggleButtonQG:Disable();
+   end
+end
+
+
+-- Switch gossip text and buttons between original and translated versions.
 function GS_ON_OFF()
-   if (curr_goss=="1") then         -- wyłącz tłumaczenie - pokaż oryginalny tekst
+   if (curr_goss=="1") then         -- turn off translation - show original text
       curr_goss="0";
       QTR_SetGossipGreetingText(QTR_GS[curr_hash], Original_Font2, 13, "LEFT");
       QTR_RestoreGossipButtons(QTR_GossipButtonsEN, Original_Font2, 13);
       QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(curr_hash).."] EN");
-   else                             -- pokaż tłumaczenie PL
+   else                             -- show translation AR
       curr_goss="1";
       local Greeting_PL = GS_Gossip[curr_hash];
-      local Greeting_AR = QTR_PrepareGossipDisplayText(Greeting_PL, GossipGreetingText:GetWidth(), 13);
+      local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, GossipGreetingText:GetWidth(), 13);
       QTR_SetGossipGreetingText(Greeting_AR, QTR_Font2, 13, "RIGHT");
       QTR_RestoreGossipButtons(QTR_GossipButtonsAR, QTR_Font2, 13);
       QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(curr_hash).."] AR");
@@ -1434,7 +1742,7 @@ function GS_ON_OFF()
 end
 
 
--- Otworzono okienko rozmowy z NPC
+-- Hash, look up, save, and apply gossip translations for the current NPC window.
 function QTR_Gossip_Show()
    local Nazwa_NPC = GossipFrameNpcNameText:GetText();
    curr_hash = 0;
@@ -1442,35 +1750,23 @@ function QTR_Gossip_Show()
    QTR_GossipButtonsAR = {};
    if (Nazwa_NPC) then
       local Greeting_Text = GossipGreetingText:GetText();
-      if (string.find(Greeting_Text," ")==nil) then         -- nie jest to tekst po polsku (nie ma twardej spacji)
+      if (string.find(Greeting_Text," ")==nil) then         -- not Polish text (no non-breaking space)
          Nazwa_NPC = string.gsub(Nazwa_NPC, '"', '\"');
          Greeting_Text = string.gsub(Greeting_Text, '"', '\"');
-         local Czysty_Text = string.gsub(Greeting_Text, '\r', '');
-         Czysty_Text = string.gsub(Czysty_Text, '\n', '$B');
-         Czysty_Text = string.gsub(Czysty_Text, QTR_name, '$N');
-         Czysty_Text = string.gsub(Czysty_Text, string.upper(QTR_name), '$N$');
-         Czysty_Text = string.gsub(Czysty_Text, QTR_race, '$R');
-         Czysty_Text = string.gsub(Czysty_Text, string.lower(QTR_race), '$R');
-         Czysty_Text = string.gsub(Czysty_Text, QTR_class, '$C');
-         Czysty_Text = string.gsub(Czysty_Text, string.lower(QTR_class), '$C');
-         Czysty_Text = string.gsub(Czysty_Text, '$N$', '');
-         Czysty_Text = string.gsub(Czysty_Text, '$N', '');
-         Czysty_Text = string.gsub(Czysty_Text, '$B', '');
-         Czysty_Text = string.gsub(Czysty_Text, '$R', '');
-         Czysty_Text = string.gsub(Czysty_Text, '$C', '');
+         local Czysty_Text = QTR_NormalizeGossipHashText(Greeting_Text);
          local Hash = StringHash(Czysty_Text);
          curr_hash = Hash;
-         QTR_GS[Hash] = Greeting_Text;                      -- zapis oryginalnego tekstu
-         if ( GS_Gossip[Hash] ) then   -- istnieje tłumaczenie tekstu GOSSIP tego NPC
+         QTR_GS[Hash] = Greeting_Text;                      -- save original text
+         if ( GS_Gossip[Hash] ) then   -- translation of this NPC's GOSSIP text exists
             curr_goss = "1";
             local Greeting_PL = GS_Gossip[Hash];
-            local Greeting_AR = QTR_PrepareGossipDisplayText(Greeting_PL, GossipGreetingText:GetWidth(), 13);
+            local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, GossipGreetingText:GetWidth(), 13);
             QTR_SetGossipGreetingText(Greeting_AR, QTR_Font2, 13, "RIGHT");
             QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
             QTR_ToggleButtonGS:Enable();
-         else                               -- nie ma tłumaczenia w bazie GOSSIP
+         else                               -- no translation in GOSSIP database
             curr_goss = "0";
-            -- zapis do pliku
+            -- save to file
             QTR_GOSSIP[Nazwa_NPC.."@"..tostring(Hash)] = Greeting_Text.."@"..QTR_name..":"..QTR_race..":"..QTR_class;
             QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
             QTR_ToggleButtonGS:Disable();
@@ -1499,16 +1795,16 @@ function QTR_Gossip_Show()
                end
             end
          end
-         if (GetNumGossipOptions()>0) then    -- są jeszcze przyciski funkcji dodatkowych
+         if (GetNumGossipOptions()>0) then    -- there are still additional function buttons in gossip, that can be translated
             local pozycja=numQuestButtons;
             local titleButton;
             for i = 1, GetNumGossipOptions(), 1 do 
                titleButton=getglobal("GossipTitleButton"..tostring(pozycja+i));
                if (titleButton:GetText()) then
                   local gostxt = titleButton:GetText();
-                  if (string.find(gostxt, "|cff000000") == nil) then   -- nie jest to quest w gossip
+                  if (string.find(gostxt, "|cff000000") == nil) then   -- not a quest in gossip
                      Hash = StringHash(gostxt);
-                     if ( GS_Gossip[Hash] ) then   -- istnieje tłumaczenie tekstu dodatkowego
+                     if ( GS_Gossip[Hash] ) then   -- translation of additional text exists
                         local optionWidth = QTR_GetGossipOptionWidth(titleButton);
                         local Gossip_AR = QTR_PrepareGossipDisplayText(GS_Gossip[Hash], optionWidth, 13);
                         QTR_GossipButtonsEN[titleButton] = gostxt;
@@ -1526,15 +1822,16 @@ function QTR_Gossip_Show()
 end
 
 
+-- Schedule tutorial translation after the frame finishes its own refresh.
 function Tut_onTutorialShow()
    if (QTR_PS["tutorial"]=="1") then
-      if (not QTR_wait(0.1,Tut_TutorialShowDelayed)) then
-         -- opóźnienie 0.1 sek
+      if (not QTR_wait(0.1,Tut_TutorialShowDelayed)) then  -- delay 0.1 sec
       end
    end
 end
 
 
+-- Apply translated tutorial text after the delayed tutorial refresh.
 function Tut_TutorialShowDelayed()
    Tut_ID = TutorialFrame.id;
    local Tut_tytul, Tut_tekst = "","";
@@ -1554,6 +1851,7 @@ function Tut_TutorialShowDelayed()
 end
 
 
+-- Expand quest placeholders for names, gender, class, and race tokens.
 function QTR_ExpandUnitInfo(msg)
    msg = string.gsub(msg, "NEW_LINE", "\n");
    msg = string.gsub(msg, "YOUR_NAME0", AS_UTF8reverse(string.upper(QTR_name)));
@@ -1566,10 +1864,10 @@ function QTR_ExpandUnitInfo(msg)
    msg = string.gsub(msg, "YOUR_NAME7", AS_UTF8reverse(QTR_name));
    msg = string.gsub(msg, "YOUR_NAME", AS_UTF8reverse(QTR_name));
    
--- jeszcze obsłużyć YOUR_GENDER(x;y)
+-- still handle YOUR_GENDER(x;y)
    local nr_1, nr_2, nr_3 = 0;
    local QTR_forma = "";
-   local nr_poz = string.find(msg, "YOUR_GENDER");    -- gdy nie znalazł, jest: nil
+   local nr_poz = string.find(msg, "YOUR_GENDER");    -- when not found, it's: nil
    while (nr_poz and nr_poz>0) do
       nr_1 = nr_poz + 1;   
       while (string.sub(msg, nr_1, nr_1) ~= "(") do
@@ -1586,9 +1884,9 @@ function QTR_ExpandUnitInfo(msg)
                nr_3 = nr_3 + 1;
             end
             if (string.sub(msg, nr_3, nr_3) == ")") then
-               if (QTR_sex==3) then        -- forma żeńska
+               if (QTR_sex==3) then        -- feminine form
                   QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
-               else                        -- forma męska
+               else                        -- masculine form
                   QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
                end
                msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
@@ -1598,10 +1896,10 @@ function QTR_ExpandUnitInfo(msg)
       nr_poz = string.find(msg, "YOUR_GENDER");
    end
 
--- jeszcze obsłużyć YOUR_GENDER(x;y)
+-- still handle YOUR_GENDER(x;y)
    local nr_1, nr_2, nr_3 = 0;
    local QTR_forma = "";
-   local nr_poz = string.find(msg, "YOUR_GENDER");    -- gdy nie znalazł, jest: nil
+   local nr_poz = string.find(msg, "YOUR_GENDER");    -- when not found, it's: nil
    while (nr_poz and nr_poz>0) do
       nr_1 = nr_poz + 1;   
       while (string.sub(msg, nr_1, nr_1) ~= "(") do
@@ -1618,9 +1916,9 @@ function QTR_ExpandUnitInfo(msg)
                nr_3 = nr_3 + 1;
             end
             if (string.sub(msg, nr_3, nr_3) == ")") then
-               if (QTR_sex==3) then        -- forma żeńska
+               if (QTR_sex==3) then        -- feminine form
                   QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
-               else                        -- forma męska
+               else                        -- masculine form
                   QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
                end
                msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
@@ -1630,11 +1928,11 @@ function QTR_ExpandUnitInfo(msg)
       nr_poz = string.find(msg, "YOUR_GENDER");
    end
 
--- jeszcze obsłużyć NPC_GENDER(x;y)
+-- still handle NPC_GENDER(x;y)
    local nr_1, nr_2, nr_3 = 0;
    local QTR_forma = "";
-   local NPC_sex = UnitSex("npc");     -- 1:neutral,  2:męski,  3:żeński
-   local nr_poz = string.find(msg, "NPC_GENDER");    -- gdy nie znalazł, jest: nil
+   local NPC_sex = UnitSex("npc");     -- 1:neutral,  2:masculine,  3:feminine
+   local nr_poz = string.find(msg, "NPC_GENDER");    -- when not found, it's: nil
    while (nr_poz and nr_poz>0) do
       nr_1 = nr_poz + 1;   
       while (string.sub(msg, nr_1, nr_1) ~= "(") do
@@ -1651,9 +1949,9 @@ function QTR_ExpandUnitInfo(msg)
                nr_3 = nr_3 + 1;
             end
             if (string.sub(msg, nr_3, nr_3) == ")") then
-               if (NPC_sex==3) then        -- forma żeńska
+               if (NPC_sex==3) then        -- feminine form
                   QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
-               else                        -- forma męska
+               else                        -- masculine form
                   QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
                end
                msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
@@ -1663,10 +1961,10 @@ function QTR_ExpandUnitInfo(msg)
       nr_poz = string.find(msg, "NPC_GENDER");
    end
 
--- jeszcze obsłużyć OWN_NAME(EN;PL)
+-- still handle OWN_NAME(EN;PL)
    local nr_1, nr_2, nr_3 = 0;
    local QTR_forma = "";
-   local nr_poz = string.find(msg, "OWN_NAME");    -- gdy nie znalazł, jest: nil
+   local nr_poz = string.find(msg, "OWN_NAME");    -- when not found, it's: nil
    while (nr_poz and nr_poz>0) do
       nr_1 = nr_poz + 1;   
       while (string.sub(msg, nr_1, nr_1) ~= "(") do
@@ -1683,12 +1981,12 @@ function QTR_ExpandUnitInfo(msg)
                nr_3 = nr_3 + 1;
             end
             if (string.sub(msg, nr_3, nr_3) == ")") then
---               if (QTR_PS["ownname"] == "1") then        -- forma polska
+--               if (QTR_PS["ownname"] == "1") then        -- Polish form
 --                  QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
---               else                                      -- forma angielska
+--               else                                      -- English form
                   QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
 --               end
---               if ((QTR_PS["ownname_obj"] == "1") and OnObjectives) then        -- zawsze forma angielska w Objectives
+--               if ((QTR_PS["ownname_obj"] == "1") and OnObjectives) then        -- always English form in Objectives
 --                  QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
 --               end
                msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
@@ -1698,67 +1996,67 @@ function QTR_ExpandUnitInfo(msg)
       nr_poz = string.find(msg, "OWN_NAME");
    end
 
-   if (QTR_sex==3) then        -- płeć żeńska
-      msg = string.gsub(msg, "YOUR_CLASS1", player_class.M2);          -- Mianownik (kto, co?)
-      msg = string.gsub(msg, "YOUR_CLASS2", player_class.D2);          -- Dopełniacz (kogo, czego?)
-      msg = string.gsub(msg, "YOUR_CLASS3", player_class.C2);          -- Celownik (komu, czemu?)
-      msg = string.gsub(msg, "YOUR_CLASS4", player_class.B2);          -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "YOUR_CLASS5", player_class.N2);          -- Narzędnik (z kim, z czym?)
-      msg = string.gsub(msg, "YOUR_CLASS6", player_class.K2);          -- Miejscownik (o kim, o czym?)
-      msg = string.gsub(msg, "YOUR_CLASS7", player_class.W2);          -- Wołacz (o!)
-      msg = string.gsub(msg, "YOUR_RACE1", player_race.M2);            -- Mianownik (kto, co?)
-      msg = string.gsub(msg, "YOUR_RACE2", player_race.D2);            -- Dopełniacz (kogo, czego?)
-      msg = string.gsub(msg, "YOUR_RACE3", player_race.C2);            -- Celownik (komu, czemu?)
-      msg = string.gsub(msg, "YOUR_RACE4", player_race.B2);            -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "YOUR_RACE5", player_race.N2);            -- Narzędnik (kim, czym?)
-      msg = string.gsub(msg, "YOUR_RACE6", player_race.K2);            -- Miejscownik (o kim, o czym?)
-      msg = string.gsub(msg, "YOUR_RACE7", player_race.W2);            -- Wołacz (o!)
-      msg = string.gsub(msg, "YOUR_RACE YOUR_CLASS", "YOUR_RACE "..player_class.M2);     -- Mianownik (kto, co?)
-      msg = string.gsub(msg, "YOUR_RACE", player_race.M2);             -- Narzędnik (kim, czym?)
+   if (QTR_sex==3) then        -- feminine form
+      msg = string.gsub(msg, "YOUR_CLASS1", player_class.M2);          -- Nominative (who, what?)
+      msg = string.gsub(msg, "YOUR_CLASS2", player_class.D2);          -- Genitive (of whom, of what?)
+      msg = string.gsub(msg, "YOUR_CLASS3", player_class.C2);          -- Dative (to whom, to what?)
+      msg = string.gsub(msg, "YOUR_CLASS4", player_class.B2);          -- Accusative (whom, what?)
+      msg = string.gsub(msg, "YOUR_CLASS5", player_class.N2);          -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, "YOUR_CLASS6", player_class.K2);          -- Locative (about whom, about what?)
+      msg = string.gsub(msg, "YOUR_CLASS7", player_class.W2);          -- Vocative (o!)
+      msg = string.gsub(msg, "YOUR_RACE1", player_race.M2);            -- Nominative (who, what?)
+      msg = string.gsub(msg, "YOUR_RACE2", player_race.D2);            -- Genitive (of whom, of what?)
+      msg = string.gsub(msg, "YOUR_RACE3", player_race.C2);            -- Dative (to whom, to what?)
+      msg = string.gsub(msg, "YOUR_RACE4", player_race.B2);            -- Accusative (whom, what?)
+      msg = string.gsub(msg, "YOUR_RACE5", player_race.N2);            -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, "YOUR_RACE6", player_race.K2);            -- Locative (about whom, about what?)
+      msg = string.gsub(msg, "YOUR_RACE7", player_race.W2);            -- Vocative (o!)
+      msg = string.gsub(msg, "YOUR_RACE YOUR_CLASS", "YOUR_RACE "..player_class.M2);     -- Nominative (who, what?)
+      msg = string.gsub(msg, "YOUR_RACE", player_race.M2);             -- Instrumental (with whom, with what?)
       msg = string.gsub(msg, "أنت YOUR_RACE", "أنت "..player_race.M2);
-      msg = string.gsub(msg, "YOUR_RACE", player_race.W2);                        -- Wołacz - pozostałe wystąpienia
-      msg = string.gsub(msg, "ą YOUR_CLASS", "ą "..player_class.N2);            -- Narzędnik (kim, czym?)
-      msg = string.gsub(msg, "esteś YOUR_CLASS", "esteś "..player_class.N2);      -- Narzędnik (kim, czym?)
-      msg = string.gsub(msg, " z Ciebie YOUR_CLASS", " z Ciebie "..player_class.M2);    -- Mianownik (kto, co?)
-      msg = string.gsub(msg, " kolejny YOUR_CLASS do ", " kolejny "..player_class.M2.." do ");   -- Mianownik (kto, co?)
-      msg = string.gsub(msg, " taki YOUR_CLASS", " taki "..player_class.M2);      -- Mianownik (kto, co?)
-      msg = string.gsub(msg, "ako YOUR_CLASS", "ako "..player_class.M2);          -- Mianownik (kto, co?)
-      msg = string.gsub(msg, " co sprowadza YOUR_CLASS", " co sprowadza "..player_class.B2);     -- Biernik (kogo, co?)
-      msg = string.gsub(msg, " będę miał YOUR_CLASS", " będę miał "..player_class.B2);  -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "YOUR_CLASS taki jak ", player_class.B2.." taki jak ");    -- Biernik (kogo, co?)
-      msg = string.gsub(msg, " jak na YOUR_CLASS", " jak na "..player_class.B2);        -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "YOUR_CLASS", player_class.W2);                      -- Wołacz - pozostałe wystąpienia
+      msg = string.gsub(msg, "YOUR_RACE", player_race.W2);                        -- Vocative - remaining occurrences
+      msg = string.gsub(msg, "ą YOUR_CLASS", "ą "..player_class.N2);            -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, "esteś YOUR_CLASS", "esteś "..player_class.N2);      -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, " z Ciebie YOUR_CLASS", " z Ciebie "..player_class.M2);    -- Nominative (who, what?)
+      msg = string.gsub(msg, " kolejny YOUR_CLASS do ", " kolejny "..player_class.M2.." do ");   -- Nominative (who, what?)
+      msg = string.gsub(msg, " taki YOUR_CLASS", " taki "..player_class.M2);      -- Nominative (who, what?)
+      msg = string.gsub(msg, "ako YOUR_CLASS", "ako "..player_class.M2);          -- Nominative (who, what?)
+      msg = string.gsub(msg, " co sprowadza YOUR_CLASS", " co sprowadza "..player_class.B2);     -- Accusative (whom, what?)
+      msg = string.gsub(msg, " będę miał YOUR_CLASS", " będę miał "..player_class.B2);  -- Accusative (whom, what?)
+      msg = string.gsub(msg, "YOUR_CLASS taki jak ", player_class.B2.." taki jak ");    -- Accusative (whom, what?)
+      msg = string.gsub(msg, " jak na YOUR_CLASS", " jak na "..player_class.B2);        -- Accusative (whom, what?)
+      msg = string.gsub(msg, "YOUR_CLASS", player_class.W2);                      -- Vocative - remaining occurrences
    else                    -- płeć męska
-      msg = string.gsub(msg, "YOUR_CLASS1", player_class.M1);          -- Mianownik (kto, co?)
-      msg = string.gsub(msg, "YOUR_CLASS2", player_class.D1);          -- Dopełniacz (kogo, czego?)
-      msg = string.gsub(msg, "YOUR_CLASS3", player_class.C1);          -- Celownik (komu, czemu?)
-      msg = string.gsub(msg, "YOUR_CLASS4", player_class.B1);          -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "YOUR_CLASS5", player_class.N1);          -- Narzędnik (z kim, z czym?)
-      msg = string.gsub(msg, "YOUR_CLASS6", player_class.K1);          -- Miejscownik (o kim, o czym?)
-      msg = string.gsub(msg, "YOUR_CLASS7", player_class.W1);          -- Wołacz (o!)
-      msg = string.gsub(msg, "YOUR_RACE1", player_race.M1);            -- Mianownik (kto, co?)
-      msg = string.gsub(msg, "YOUR_RACE2", player_race.D1);            -- Dopełniacz (kogo, czego?)
-      msg = string.gsub(msg, "YOUR_RACE3", player_race.C1);            -- Celownik (komu, czemu?)
-      msg = string.gsub(msg, "YOUR_RACE4", player_race.B1);            -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "YOUR_RACE5", player_race.N1);            -- Narzędnik (kim, czym?)
-      msg = string.gsub(msg, "YOUR_RACE6", player_race.K1);            -- Miejscownik (o kim, o czym?)
-      msg = string.gsub(msg, "YOUR_RACE7", player_race.W1);            -- Wołacz (o!)
-      msg = string.gsub(msg, "YOUR_RACE YOUR_CLASS", "YOUR_RACE "..player_class.M1);     -- Mianownik (kto, co?)
-      msg = string.gsub(msg, "ym YOUR_RACE", "ym "..player_race.N1);              -- Narzędnik (kim, czym?)
-      msg = string.gsub(msg, " jesteś YOUR_RACE", " jesteś "..player_race.N1);    -- Narzędnik (kim, czym?)
-      msg = string.gsub(msg, "YOUR_RACE", player_race.W1);                        -- Wołacz - pozostałe wystąpienia
-      msg = string.gsub(msg, "ym YOUR_CLASS", "ym "..player_class.N1);            -- Narzędnik (kim, czym?)
-      msg = string.gsub(msg, "esteś YOUR_CLASS", "esteś "..player_class.N1);      -- Narzędnik (kim, czym?)
-      msg = string.gsub(msg, " z Ciebie YOUR_CLASS", " z Ciebie "..player_class.M1);    -- Mianownik (kto, co?)
-      msg = string.gsub(msg, " kolejny YOUR_CLASS do ", " kolejny "..player_class.M1.." do ");   -- Mianownik (kto, co?)
-      msg = string.gsub(msg, " taki YOUR_CLASS", " taki "..player_class.M1);      -- Mianownik (kto, co?)
-      msg = string.gsub(msg, "ako YOUR_CLASS", "ako "..player_class.M1);          -- Mianownik (kto, co?)
-      msg = string.gsub(msg, " co sprowadza YOUR_CLASS", " co sprowadza "..player_class.B1);     -- Biernik (kogo, co?)
-      msg = string.gsub(msg, " będę miał YOUR_CLASS", " będę miał "..player_class.B1);  -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "ego YOUR_CLASS", "ego "..player_class.B1);                -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "YOUR_CLASS taki jak ", player_class.B1.." taki jak ");    -- Biernik (kogo, co?)
-      msg = string.gsub(msg, " jak na YOUR_CLASS", " jak na "..player_class.B1);        -- Biernik (kogo, co?)
-      msg = string.gsub(msg, "YOUR_CLASS", player_class.W1);                      -- Wołacz - pozostałe wystąpienia
+      msg = string.gsub(msg, "YOUR_CLASS1", player_class.M1);          -- Nominative (who, what?)
+      msg = string.gsub(msg, "YOUR_CLASS2", player_class.D1);          -- Genitive (of whom, of what?)
+      msg = string.gsub(msg, "YOUR_CLASS3", player_class.C1);          -- Dative (to whom, to what?)
+      msg = string.gsub(msg, "YOUR_CLASS4", player_class.B1);          -- Accusative (whom, what?)
+      msg = string.gsub(msg, "YOUR_CLASS5", player_class.N1);          -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, "YOUR_CLASS6", player_class.K1);          -- Locative (about whom, about what?)
+      msg = string.gsub(msg, "YOUR_CLASS7", player_class.W1);          -- Vocative (o!)
+      msg = string.gsub(msg, "YOUR_RACE1", player_race.M1);            -- Nominative (who, what?)
+      msg = string.gsub(msg, "YOUR_RACE2", player_race.D1);            -- Genitive (of whom, of what?)
+      msg = string.gsub(msg, "YOUR_RACE3", player_race.C1);            -- Dative (to whom, to what?)
+      msg = string.gsub(msg, "YOUR_RACE4", player_race.B1);            -- Accusative (whom, what?)
+      msg = string.gsub(msg, "YOUR_RACE5", player_race.N1);            -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, "YOUR_RACE6", player_race.K1);            -- Locative (about whom, about what?)
+      msg = string.gsub(msg, "YOUR_RACE7", player_race.W1);            -- Vocative (o!)
+      msg = string.gsub(msg, "YOUR_RACE YOUR_CLASS", "YOUR_RACE "..player_class.M1);     -- Nominative (who, what?)
+      msg = string.gsub(msg, "ym YOUR_RACE", "ym "..player_race.N1);              -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, " jesteś YOUR_RACE", " jesteś "..player_race.N1);    -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, "YOUR_RACE", player_race.W1);                        -- Vocative - remaining occurrences
+      msg = string.gsub(msg, "ym YOUR_CLASS", "ym "..player_class.N1);            -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, "esteś YOUR_CLASS", "esteś "..player_class.N1);      -- Instrumental (with whom, with what?)
+      msg = string.gsub(msg, " z Ciebie YOUR_CLASS", " z Ciebie "..player_class.M1);    -- Nominative (who, what?)
+      msg = string.gsub(msg, " kolejny YOUR_CLASS do ", " kolejny "..player_class.M1.." do ");   -- Nominative (who, what?)
+      msg = string.gsub(msg, " taki YOUR_CLASS", " taki "..player_class.M1);      -- Nominative (who, what?)
+      msg = string.gsub(msg, "ako YOUR_CLASS", "ako "..player_class.M1);          -- Nominative (who, what?)
+      msg = string.gsub(msg, " co sprowadza YOUR_CLASS", " co sprowadza "..player_class.B1);     -- Accusative (whom, what?)
+      msg = string.gsub(msg, " będę miał YOUR_CLASS", " będę miał "..player_class.B1);  -- Accusative (whom, what?)
+      msg = string.gsub(msg, "ego YOUR_CLASS", "ego "..player_class.B1);                -- Accusative (whom, what?)
+      msg = string.gsub(msg, "YOUR_CLASS taki jak ", player_class.B1.." taki jak ");    -- Accusative (whom, what?)
+      msg = string.gsub(msg, " jak na YOUR_CLASS", " jak na "..player_class.B1);        -- Accusative (whom, what?)
+      msg = string.gsub(msg, "YOUR_CLASS", player_class.W1);                      -- Vocative - remaining occurrences
    end
 
   return msg;
