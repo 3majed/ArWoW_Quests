@@ -392,6 +392,7 @@ end
 
 -- Apply translated text and alignment rules to a quest or gossip title button.
 local QTR_TitleButtonAnchorCache = {};
+local QTR_TitleButtonFontCache = {};
 
 
 local function QTR_SetTitleButtonText(titleButton, text, fontName, fontSize)
@@ -399,6 +400,16 @@ local function QTR_SetTitleButtonText(titleButton, text, fontName, fontSize)
 
   local fontString = titleButton:GetFontString();
   if (fontString) then
+     if (not QTR_TitleButtonFontCache[titleButton]) then
+        local originalFont, originalSize, originalFlags = fontString:GetFont();
+        QTR_TitleButtonFontCache[titleButton] = {
+           font = originalFont,
+           size = originalSize,
+           flags = originalFlags,
+           justify = fontString:GetJustifyH(),
+        };
+     end
+
      fontString:SetFont(fontName, fontSize);
      local isQuestTitleButton = titleButton:GetName() and string.find(titleButton:GetName(), "^QuestTitleButton");
 
@@ -426,6 +437,35 @@ local function QTR_SetTitleButtonText(titleButton, text, fontName, fontSize)
               fontString:SetPoint(unpack(pointData));
            end
         end
+     end
+  end
+end
+
+
+local function QTR_RestoreTitleButtonFont(titleButton)
+  if (not titleButton) then
+     return;
+  end
+
+  local fontString = titleButton:GetFontString();
+  if (not fontString) then
+     return;
+  end
+
+  local fontData = QTR_TitleButtonFontCache[titleButton];
+  if (fontData and fontData.font and fontData.size) then
+     fontString:SetFont(fontData.font, fontData.size, fontData.flags);
+     fontString:SetJustifyH(fontData.justify or "LEFT");
+  else
+     fontString:SetFont(Original_Font2, 13);
+     fontString:SetJustifyH("LEFT");
+  end
+
+  local isQuestTitleButton = titleButton:GetName() and string.find(titleButton:GetName(), "^QuestTitleButton");
+  if (isQuestTitleButton and QTR_TitleButtonAnchorCache[titleButton]) then
+     fontString:ClearAllPoints();
+     for _, pointData in ipairs(QTR_TitleButtonAnchorCache[titleButton]) do
+        fontString:SetPoint(unpack(pointData));
      end
   end
 end
@@ -490,6 +530,176 @@ local function QTR_GetQuestTitleTranslation(titleText)
   end
 
   return nil;
+end
+
+
+local QTR_QuestLogTitleButtonHooks = {};
+local QTR_QuestLogTitleButtonUpdateLock = {};
+
+
+-- Resize the quest log title font string after swapping in translated text.
+local function QTR_ResizeQuestLogTitleButton(titleButton)
+  if (not titleButton or not titleButton.normalText) then
+     return;
+  end
+
+  local questNormalText = titleButton.normalText;
+  local questTitleTag = titleButton.tag;
+  local questCheck = titleButton.check;
+
+  questNormalText:SetWidth(0);
+
+  local rightEdge;
+  if (questTitleTag and questTitleTag:IsShown()) then
+     if (questCheck and questCheck:IsShown()) then
+        rightEdge = titleButton:GetLeft() + titleButton:GetWidth() - questTitleTag:GetWidth() - 4 - questCheck:GetWidth() - 2;
+     else
+        rightEdge = titleButton:GetLeft() + titleButton:GetWidth() - questTitleTag:GetWidth() - 4;
+     end
+  else
+     if (questCheck and questCheck:IsShown()) then
+        rightEdge = titleButton:GetLeft() + titleButton:GetWidth() - questCheck:GetWidth() - 2;
+     else
+        rightEdge = titleButton:GetLeft() + titleButton:GetWidth();
+     end
+  end
+
+  local questNormalTextWidth = questNormalText:GetWidth() - max(questNormalText:GetRight() - rightEdge, 0);
+  questNormalText:SetWidth(questNormalTextWidth);
+end
+
+
+-- Replace only the English quest-title segment so custom row prefixes/suffixes stay intact.
+local function QTR_GetTranslatedQuestLogButtonText(displayText, questTitle, translatedQuestTitle)
+  if (not translatedQuestTitle) then
+     return nil;
+  end
+
+  local translatedDisplayTitle = QTR_ReverseText(translatedQuestTitle);
+  if (not displayText or displayText == "") then
+     return translatedDisplayTitle;
+  end
+  if (AS_ContainsArabic and AS_ContainsArabic(displayText)) then
+     return displayText;
+  end
+  if (not questTitle or questTitle == "") then
+     return translatedDisplayTitle;
+  end
+
+  local titleStart, titleEnd = string.find(displayText, questTitle, 1, true);
+  if (titleStart and titleEnd) then
+     return string.sub(displayText, 1, titleStart - 1) .. translatedDisplayTitle .. string.sub(displayText, titleEnd + 1);
+  end
+
+  return nil;
+end
+
+
+-- Translate a single quest-log title button using its live display text.
+local function QTR_UpdateQuestLogTitleButton(titleButton, displayText)
+  if (not titleButton or QTR_QuestLogTitleButtonUpdateLock[titleButton]) then
+     return;
+  end
+
+  if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
+     QTR_RestoreTitleButtonFont(titleButton);
+     QTR_ResizeQuestLogTitleButton(titleButton);
+     return;
+  end
+
+  local questIndex = titleButton:GetID();
+  if (not questIndex or questIndex <= 0) then
+     return;
+  end
+
+  local questTitle, level, questTag, suggestedGroup, isHeader, isCollapsed, isComplete, isDaily, questID = GetQuestLogTitle(questIndex);
+  if (not questTitle or isHeader) then
+     return;
+  end
+
+  local translatedQuestTitle = nil;
+  if (questID) then
+     translatedQuestTitle = QTR_GetTranslatedQuestTitleById(tostring(questID));
+  end
+  if (not translatedQuestTitle) then
+     translatedQuestTitle = QTR_GetQuestTitleTranslation(questTitle);
+  end
+  if (not translatedQuestTitle) then
+     return;
+  end
+
+  local currentDisplayText = displayText;
+  if (currentDisplayText == nil) then
+     if (titleButton.normalText and titleButton.normalText.GetText) then
+        currentDisplayText = titleButton.normalText:GetText();
+     else
+        currentDisplayText = titleButton:GetText();
+     end
+  end
+
+  local translatedDisplayText = QTR_GetTranslatedQuestLogButtonText(currentDisplayText, questTitle, translatedQuestTitle);
+  if (translatedDisplayText and translatedDisplayText ~= currentDisplayText) then
+     QTR_QuestLogTitleButtonUpdateLock[titleButton] = true;
+     QTR_SetTitleButtonText(titleButton, translatedDisplayText, QTR_Font2, 13);
+     QTR_QuestLogTitleButtonUpdateLock[titleButton] = nil;
+     QTR_ResizeQuestLogTitleButton(titleButton);
+  end
+end
+
+
+local function QTR_RestoreQuestLogTitleButtons()
+  if (not QuestLogScrollFrame or not QuestLogScrollFrame.buttons) then
+     return;
+  end
+
+  for _, titleButton in ipairs(QuestLogScrollFrame.buttons) do
+     if (titleButton and titleButton:IsShown() and not titleButton.isHeader) then
+        QTR_RestoreTitleButtonFont(titleButton);
+        QTR_ResizeQuestLogTitleButton(titleButton);
+     end
+  end
+end
+
+
+-- Install per-button SetText hooks so later quest-log repaints still pass through translation.
+local function QTR_HookQuestLogTitleButtons()
+  if (not QuestLogScrollFrame or not QuestLogScrollFrame.buttons) then
+     return;
+  end
+
+  for _, titleButton in ipairs(QuestLogScrollFrame.buttons) do
+     if (titleButton and not QTR_QuestLogTitleButtonHooks[titleButton]) then
+        QTR_QuestLogTitleButtonHooks[titleButton] = true;
+        hooksecurefunc(titleButton, "SetText", function(self, text)
+           QTR_UpdateQuestLogTitleButton(self, text);
+        end);
+        if (titleButton.normalText) then
+           hooksecurefunc(titleButton.normalText, "SetText", function(_, text)
+              QTR_UpdateQuestLogTitleButton(titleButton, text);
+           end);
+        end
+     end
+  end
+end
+
+
+-- Reapply translated quest titles to the visible left quest-log rows after Blizzard redraws them.
+local function QTR_UpdateQuestLogTitleButtons()
+  if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
+     return;
+  end
+  if (not QuestLogFrame or not QuestLogFrame:IsVisible() or not QuestLogScrollFrame or not QuestLogScrollFrame.buttons) then
+     return;
+  end
+
+  QTR_HookQuestLogTitleButtons();
+
+  local buttons = QuestLogScrollFrame.buttons;
+  for _, titleButton in ipairs(buttons) do
+     if (titleButton and titleButton:IsShown() and not titleButton.isHeader) then
+        QTR_UpdateQuestLogTitleButton(titleButton);
+     end
+  end
 end
 
 
@@ -773,6 +983,7 @@ function QTR_OnLoad1()
   QTR_ToggleButton3:SetScript("OnClick", QTR_ChangeFrameWidth);
 
   hooksecurefunc("QuestLogTitleButton_OnClick", function() QTR_UpdateQuestInfo() end);
+   hooksecurefunc("QuestLog_Update", QTR_UpdateQuestLogTitleButtons);
   
    -- button with no HASH gossip in QuestMapDetailsScrollFrame
    QTR_ToggleButtonGS = CreateFrame("Button",nil, GossipFrame, "UIPanelButtonTemplate");
@@ -1535,6 +1746,8 @@ local function QTR_RestoreQuestLogEnglish()
   if (QuestLog_Update) then
      QuestLog_Update();
   end
+
+   QTR_RestoreQuestLogTitleButtons();
 end
 
 
@@ -1577,6 +1790,7 @@ function QTR_ShowAndUpdateQuestInfo()
      QTRFrame1:Show();
   end;
   QTR_UpdateQuestInfo();
+   QTR_UpdateQuestLogTitleButtons();
 end
 
 
