@@ -173,6 +173,188 @@ local function QTR_ReverseText(text)
 end
 
 
+-- Show addon status text in a dedicated Arabic-font overlay so the main chat keeps its own font.
+local QTR_SystemMessageFrame = nil;
+local QTR_SystemMessageText = nil;
+local QTR_SystemMessageSerial = 0;
+
+
+local function QTR_EnsureSystemMessageFrame()
+  if (QTR_SystemMessageFrame and QTR_SystemMessageText) then
+     return true;
+  end
+
+  local parentFrame = DEFAULT_CHAT_FRAME or UIParent;
+  if (not parentFrame) then
+     return false;
+  end
+
+  QTR_SystemMessageFrame = CreateFrame("Frame", "QTR_SystemMessageFrame", parentFrame);
+  QTR_SystemMessageFrame:SetFrameStrata("HIGH");
+  QTR_SystemMessageFrame:SetClampedToScreen(true);
+  QTR_SystemMessageFrame:ClearAllPoints();
+  if (DEFAULT_CHAT_FRAME) then
+     QTR_SystemMessageFrame:SetPoint("BOTTOMLEFT", DEFAULT_CHAT_FRAME, "TOPLEFT", 0, 6);
+  else
+     QTR_SystemMessageFrame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", 32, 220);
+  end
+  QTR_SystemMessageFrame:SetWidth((DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME:GetWidth() and DEFAULT_CHAT_FRAME:GetWidth() > 0 and DEFAULT_CHAT_FRAME:GetWidth()) or 360);
+  QTR_SystemMessageFrame:SetHeight(24);
+  QTR_SystemMessageFrame:Hide();
+
+  QTR_SystemMessageText = QTR_SystemMessageFrame:CreateFontString(nil, "OVERLAY");
+  QTR_SystemMessageText:ClearAllPoints();
+  QTR_SystemMessageText:SetPoint("TOPLEFT", QTR_SystemMessageFrame, "TOPLEFT", 0, 0);
+  QTR_SystemMessageText:SetPoint("BOTTOMRIGHT", QTR_SystemMessageFrame, "BOTTOMRIGHT", 0, 0);
+   QTR_SystemMessageText:SetFont(QTR_Font2, 13);
+  QTR_SystemMessageText:SetJustifyH("LEFT");
+  QTR_SystemMessageText:SetJustifyV("MIDDLE");
+  QTR_SystemMessageText:SetText("");
+  return true;
+end
+
+
+local function QTR_ShowSystemOverlayMessage(message)
+  if (not QTR_EnsureSystemMessageFrame()) then
+     return false;
+  end
+
+  local fontSize = 13;
+  local fontFlags = "";
+  if (DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.GetFont) then
+     local _, currentSize, currentFlags = DEFAULT_CHAT_FRAME:GetFont();
+     if (currentSize) then
+        fontSize = currentSize;
+     end
+     fontFlags = currentFlags or "";
+  end
+
+  if (DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.GetWidth) then
+     local chatWidth = DEFAULT_CHAT_FRAME:GetWidth();
+     if (chatWidth and chatWidth > 0) then
+        QTR_SystemMessageFrame:SetWidth(chatWidth);
+     end
+  end
+
+  QTR_SystemMessageText:SetFont(QTR_Font2, fontSize, fontFlags);
+  QTR_SystemMessageText:SetJustifyH("LEFT");
+  QTR_SystemMessageText:SetText(message or "");
+  QTR_SystemMessageFrame:Show();
+
+  QTR_SystemMessageSerial = QTR_SystemMessageSerial + 1;
+  local currentSerial = QTR_SystemMessageSerial;
+  if (QTR_wait) then
+     QTR_wait(4, function(serial)
+        if (QTR_SystemMessageFrame and serial == QTR_SystemMessageSerial) then
+           QTR_SystemMessageFrame:Hide();
+        end
+     end, currentSerial);
+  end
+
+  return true;
+end
+
+
+-- Send addon status text without changing the font of the user's main chat frame.
+local function QTR_AddLocalizedSystemMessage(prefixText, localizedText)
+  local message = prefixText or "";
+  local displayText = localizedText or "";
+
+  if (displayText ~= "" and AS_ContainsArabic and AS_ContainsArabic(displayText)) then
+     displayText = QTR_ReverseText(displayText);
+  end
+
+  message = message .. displayText;
+
+  if (displayText ~= "" and AS_ContainsArabic and AS_ContainsArabic(localizedText or "")) then
+     if (QTR_ShowSystemOverlayMessage(message)) then
+        return;
+     end
+  end
+
+  if (DEFAULT_CHAT_FRAME) then
+     DEFAULT_CHAT_FRAME:AddMessage(message);
+     return;
+  end
+
+  if (UIErrorsFrame) then
+     UIErrorsFrame:AddMessage(message, 1.0, 1.0, 1.0, 1.0, UIERRORS_HOLD_TIME);
+  end
+end
+
+
+-- Tolerant UTF-8 reader shared by quest text shaping.
+local function QTR_GetSafeUtf8Char(text, pos)
+  if (not text or text == "") then
+     return "", 1, false;
+  end
+
+  local c = strbyte(text, pos);
+  if (not c) then
+     return "", 1, false;
+  end
+
+  local charbytes = 1;
+  local isValid = true;
+
+  if (c > 0 and c <= 127) then
+     charbytes = 1;
+  elseif (c >= 194 and c <= 223) then
+     local c2 = strbyte(text, pos + 1);
+     if (c2 and c2 >= 128 and c2 <= 191) then
+        charbytes = 2;
+     else
+        isValid = false;
+     end
+  elseif (c >= 224 and c <= 239) then
+     local c2 = strbyte(text, pos + 1);
+     local c3 = strbyte(text, pos + 2);
+
+     if (not c2 or not c3) then
+        isValid = false;
+     elseif (c == 224 and (c2 < 160 or c2 > 191)) then
+        isValid = false;
+     elseif (c == 237 and (c2 < 128 or c2 > 159)) then
+        isValid = false;
+     elseif (c2 < 128 or c2 > 191) then
+        isValid = false;
+     elseif (c3 < 128 or c3 > 191) then
+        isValid = false;
+     else
+        charbytes = 3;
+     end
+  elseif (c >= 240 and c <= 244) then
+     local c2 = strbyte(text, pos + 1);
+     local c3 = strbyte(text, pos + 2);
+     local c4 = strbyte(text, pos + 3);
+
+     if (not c2 or not c3 or not c4) then
+        isValid = false;
+     elseif (c == 240 and (c2 < 144 or c2 > 191)) then
+        isValid = false;
+     elseif (c == 244 and (c2 < 128 or c2 > 143)) then
+        isValid = false;
+     elseif (c2 < 128 or c2 > 191) then
+        isValid = false;
+     elseif (c3 < 128 or c3 > 191) then
+        isValid = false;
+     elseif (c4 < 128 or c4 > 191) then
+        isValid = false;
+     else
+        charbytes = 4;
+     end
+  else
+     isValid = false;
+  end
+
+  if (not isValid) then
+     return "", 1, false;
+  end
+
+  return string.sub(text, pos, pos + charbytes - 1), charbytes, true;
+end
+
+
 -- Wrap and reverse a text block line by line for right-to-left rendering.
 local function QTR_LineReverse(text, limit)
   local retstr = "";
@@ -182,20 +364,26 @@ local function QTR_LineReverse(text, limit)
      local newstr = "";
      local counter = 0;
      while (pos <= bytes) do
-        local charbytes = AS_UTF8charbytes(text, pos);
-        local char1 = strsub(text, pos, pos + charbytes - 1);
-        newstr = newstr .. char1;
+        local char1, charbytes = QTR_GetSafeUtf8Char(text, pos);
         pos = pos + charbytes;
 
-        counter = counter + 1;
-        if ((char1 >= "A") and (char1 <= "z")) then
+        if (char1 == "") then
+           if (pos > bytes) then
+              break;
+           end
+        else
+           newstr = newstr .. char1;
+
            counter = counter + 1;
-        end
-        if ((char1 == "#") or ((char1 == " ") and (counter > limit))) then
-           newstr = string.gsub(newstr, "#", "");
-           retstr = retstr .. AS_UTF8reverse(newstr) .. "\n";
-           newstr = "";
-           counter = 0;
+           if ((char1 >= "A") and (char1 <= "z")) then
+              counter = counter + 1;
+           end
+           if ((char1 == "#") or ((char1 == " ") and (counter > limit))) then
+              newstr = string.gsub(newstr, "#", "");
+              retstr = retstr .. AS_UTF8reverse(newstr) .. "\n";
+              newstr = "";
+              counter = 0;
+           end
         end
      end
      retstr = retstr .. AS_UTF8reverse(newstr);
@@ -905,6 +1093,7 @@ function QTR_BlizzardOptions()
   QTRCheckButtonTutorial:SetScript("OnClick", function(self) if (QTR_PS["tutorial"]=="1") then QTR_PS["tutorial"]="0" else QTR_PS["tutorial"]="1" end; end);
   QTRCheckButtonTutorialText:SetFont(QTR_Font2, 13);
    QTRCheckButtonTutorialText:SetText(QTR_ReverseText("اعرض ترجمات النصوص التعليمية")); 
+
   
   local QTRWWW1 = QTROptions:CreateFontString(nil, "ARTWORK");
   QTRWWW1:SetFontObject(GameFontWhite);
@@ -1065,11 +1254,7 @@ function QTR:ADDON_LOADED(_, addon)
      SLASH_WOWPOPOLSKU_QUESTS2 = "/qtr";
      QTR_CheckVars();
      QTR_BlizzardOptions();
-     if (DEFAULT_CHAT_FRAME) then
-         DEFAULT_CHAT_FRAME:AddMessage("|cffffff00ArWoW-Quests ver. "..QTR_version.." - " .. QTR_Messages.loaded);
-     else
-         UIErrorsFrame:AddMessage("|cffffff00ArWoW-Quests ver. "..QTR_version.." - " .. QTR_Messages.loaded, 1.0, 1.0, 1.0, 1.0, UIERRORS_HOLD_TIME);
-     end
+       QTR_AddLocalizedSystemMessage("|cffffff00ArWoW-Quests ver. "..QTR_version.." - ", QTR_Messages.loaded);
      self.frame1:UnregisterEvent("ADDON_LOADED");
      self.ADDON_LOADED = nil;
      QTR_Messages.itemchoose1 = Spr_Gender(QTR_Messages.itemchoose1);
@@ -1757,19 +1942,11 @@ function QTR_ToggleVisibility()
   if (QTR_PS["active"]=="0") then
      QTR_PS["active"] = "1";
      QTR_ShowAndUpdateQuestInfo();
-     if (DEFAULT_CHAT_FRAME) then
-         DEFAULT_CHAT_FRAME:AddMessage("|cffffff00ArWoW-Quests "..QTR_Messages.isactive);
-     else
-         UIErrorsFrame:AddMessage("|cffffff00ArWoW-Quests "..QTR_Messages.isactive, 1.0, 1.0, 1.0, 1.0, UIERRORS_HOLD_TIME);
-     end
+    QTR_AddLocalizedSystemMessage("|cffffff00ArWoW-Quests ", QTR_Messages.isactive);
   else
      QTR_PS["active"] = "0";
      QTR_HideQuestInfo();
-     if (DEFAULT_CHAT_FRAME) then
-         DEFAULT_CHAT_FRAME:AddMessage("|cffffff00ArWoW-Quests "..QTR_Messages.isinactive);
-     else
-         UIErrorsFrame:AddMessage("|cffffff00ArWoW-Quests "..QTR_Messages.isinactive, 1.0, 1.0, 1.0, 1.0, UIERRORS_HOLD_TIME);
-     end
+    QTR_AddLocalizedSystemMessage("|cffffff00ArWoW-Quests ", QTR_Messages.isinactive);
      RestoreOriginalFonts();
      if (QTR_PS["mode"]=="1") then
         QTR_RestoreQuestLogEnglish();
