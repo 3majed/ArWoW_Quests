@@ -397,7 +397,7 @@ end
 
 local QTR_FontStringWidthCache = {};
 local QTR_RTLWidthAdjustments = {
-   GossipGreetingText = 10,
+   GossipGreetingText = 0,
    QuestProgressText = 10,
    QuestProgressRequiredItemsText = -10,
 };
@@ -547,14 +547,14 @@ end
 
 
 -- Prepare gossip text for display, including wrapping for Arabic buttons.
-local function QTR_PrepareGossipDisplayText(msg, width, fontSize)
+local function QTR_PrepareGossipDisplayText(msg, width, fontSize, fontName)
   local expanded = QTR_ExpandGossipInfo(msg);
   if (expanded == "") then
      return expanded;
   end
 
   if (AS_ContainsArabic and AS_ContainsArabic(expanded) and width and width > 0) then
-     return AS_ReverseAndPrepareLineText(expanded, width, fontSize);
+     return AS_ReverseAndPrepareLineText(expanded, width, fontName or QTR_Font1 or QTR_Font2, fontSize);
   end
 
   return string.gsub(expanded, "#", "\n");
@@ -564,13 +564,13 @@ end
 local QTR_GossipWrapWarmupDone = false;
 
 
-local function QTR_PrepareShownGossipDisplayText(msg, width, fontSize)
+local function QTR_PrepareShownGossipDisplayText(msg, width, fontSize, fontName)
    if (not QTR_GossipWrapWarmupDone) then
        QTR_GossipWrapWarmupDone = true;
-       QTR_PrepareGossipDisplayText(msg, width, fontSize);
+      QTR_PrepareGossipDisplayText(msg, width, fontSize, fontName);
    end
 
-   return QTR_PrepareGossipDisplayText(msg, width, fontSize);
+   return QTR_PrepareGossipDisplayText(msg, width, fontSize, fontName);
 end
 
 
@@ -1257,9 +1257,11 @@ local function QTR_UpdateWatchFrame()
               local questId = tostring(questID);
               local questData = QTR_QuestData and QTR_QuestData[questId];
               local titleLine = linkButton.lines[linkButton.startLine];
+              local useArabicWatchLayout = false;
 
               if (titleLine and titleLine.text) then
                  if (QTR_PS["transtitle"] == "1" and questData and questData["Title"]) then
+                    useArabicWatchLayout = true;
                     QTR_ConfigureWatchFrameLineLayout(titleLine, true);
                     QTR_UpdateWatchFrameQuestIcons(titleLine, questIndex, questID, true);
                     local _, titleSize = titleLine.text:GetFont();
@@ -1285,12 +1287,30 @@ local function QTR_UpdateWatchFrame()
                  local objectiveLine = linkButton.lines[linkButton.startLine + 1];
                  if (objectiveLine and objectiveLine.text) then
                     local objectiveText = objectiveLine.text:GetText() or "";
-                    if (objectiveText ~= "" and not string.find(objectiveText, "%d+%s*/%s*%d+")) then
+                    local translatedObjective = QTR_ExpandUnitInfo(questData["Objectives"]);
+                    local hasDynamicProgress = string.find(objectiveText, "%d+%s*/%s*%d+") ~= nil;
+                    if (objectiveText ~= "" and not hasDynamicProgress) then
                        QTR_ConfigureWatchFrameLineLayout(objectiveLine, true);
                        local _, objectiveSize = objectiveLine.text:GetFont();
                        objectiveLine:SetHeight(WATCHFRAME_LINEHEIGHT or objectiveLine:GetHeight());
                        objectiveLine.text:SetHeight(0);
-                       QTR_SetShapedText(objectiveLine.text, QTR_ExpandUnitInfo(questData["Objectives"]), QTR_Font2, objectiveSize or 12, QTR_WatchFrameObjectiveLimit);
+                       QTR_SetShapedText(objectiveLine.text, translatedObjective, QTR_Font2, objectiveSize or 12, QTR_WatchFrameObjectiveLimit);
+                       local objectiveHeight = objectiveLine.text:GetHeight();
+                       if (objectiveHeight > (WATCHFRAME_LINEHEIGHT or 16)) then
+                          local objectiveLineHeight = WATCHFRAME_MULTIPLE_LINEHEIGHT or objectiveLine:GetHeight();
+                          if (objectiveHeight > objectiveLineHeight) then
+                             objectiveLineHeight = objectiveHeight;
+                          end
+                          objectiveLine:SetHeight(objectiveLineHeight);
+                          objectiveLine.text:SetHeight(objectiveLineHeight);
+                       end
+                    elseif (objectiveText ~= "" and useArabicWatchLayout) then
+                       QTR_ConfigureWatchFrameLineLayout(objectiveLine, true);
+                       local objectiveFont, objectiveSize = objectiveLine.text:GetFont();
+                       objectiveLine:SetHeight(WATCHFRAME_LINEHEIGHT or objectiveLine:GetHeight());
+                       objectiveLine.text:SetHeight(0);
+                       QTR_SetShapedText(objectiveLine.text, objectiveText, objectiveFont or Original_Font2, objectiveSize or 12);
+                       objectiveLine.text:SetJustifyH("RIGHT");
                        local objectiveHeight = objectiveLine.text:GetHeight();
                        if (objectiveHeight > (WATCHFRAME_LINEHEIGHT or 16)) then
                           local objectiveLineHeight = WATCHFRAME_MULTIPLE_LINEHEIGHT or objectiveLine:GetHeight();
@@ -1435,6 +1455,7 @@ end
 
 local QTR_RuntimeInitialized = false;
 local QTR_EventFrame = CreateFrame("Frame");
+local QTR_SuppressGossipRefreshHook = false;
 
 
 local function QTR_InitializeRuntime()
@@ -1477,6 +1498,13 @@ local function QTR_InitializeRuntime()
      QTR_ToggleButtonGS:ClearAllPoints();
      QTR_ToggleButtonGS:SetPoint("TOPLEFT", GossipFrame, "TOPLEFT", 70, -50);
      QTR_ToggleButtonGS:SetScript("OnClick", GS_ON_OFF);
+  end
+  if (type(GossipFrameUpdate) == "function") then
+     hooksecurefunc("GossipFrameUpdate", function()
+        if (not QTR_SuppressGossipRefreshHook and QTR_PS and QTR_PS["gossip"] == "1" and GossipFrame and GossipFrame:IsVisible() and GossipGreetingText and GossipGreetingText:IsShown()) then
+           QTR_Gossip_Show();
+        end
+     end);
   end
 
   if (QuestFrame) then
@@ -1922,11 +1950,11 @@ function QTR_ChangeText_InEvent(QTR_event, str_id)
    QTR_SetShapedText(QuestProgressTitleText, QTR_GetTranslatedQuestTitleById(str_id), QTR_Font1, 18);
   end
   QTR_SetShapedText(QuestInfoDescriptionHeader, QTR_Messages.details, QTR_Font1, 18);
-  QTR_SetShapedText(QuestInfoDescriptionText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Description"]), QTR_Font2, 13, QTR_QuestBodyLimit);
+   QTR_SetShapedText(QuestInfoDescriptionText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Description"]), QTR_Font1, 13, QTR_QuestBodyLimit);
   QTR_SetShapedText(QuestInfoObjectivesHeader, QTR_Messages.objectives, QTR_Font1, 18);
-  QTR_SetShapedText(QuestInfoObjectivesText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Objectives"]), QTR_Font2, 13, QTR_QuestBodyLimit);
+   QTR_SetShapedText(QuestInfoObjectivesText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Objectives"]), QTR_Font1, 13, QTR_QuestBodyLimit);
   QTR_SetShapedText(QuestInfoRewardsHeader, QTR_Messages.rewards, QTR_Font1, 18);
-  QTR_SetShapedText(QuestInfoRewardText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Completion"]), QTR_Font2, 13, QTR_QuestBodyLimit);
+   QTR_SetShapedText(QuestInfoRewardText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Completion"]), QTR_Font1, 13, QTR_QuestBodyLimit);
   if (QTR_event=="QUEST_COMPLETE") then
      QTR_SetShapedText(QuestInfoItemChooseText, QTR_Messages.itemchoose2, QTR_Font2, 13);
      QTR_SetShapedText(QuestInfoItemReceiveText, QTR_Messages.itemreceiv2, QTR_Font2, 13);
@@ -1937,7 +1965,7 @@ function QTR_ChangeText_InEvent(QTR_event, str_id)
   QTR_SetShapedText(QuestInfoXPFrameReceiveText, QTR_Messages.experience, QTR_Font2, 13);
   QTR_SetShapedText(QuestInfoRequiredMoneyText, QTR_Messages.reqmoney, QTR_Font2, 13);
   QTR_SetShapedText(QuestInfoSpellLearnText, QTR_Messages.learnspell, QTR_Font2, 13);
-  QTR_SetShapedText(QuestProgressText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Progress"]), QTR_Font2, 13, QTR_QuestBodyLimit);
+   QTR_SetShapedText(QuestProgressText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Progress"]), QTR_Font1, 13, QTR_QuestBodyLimit);
   QTR_SetShapedText(QuestProgressRequiredMoneyText, QTR_Messages.reqmoney, QTR_Font2, 13);
   QTR_SetShapedText(QuestProgressRequiredItemsText, QTR_Messages.reqitems, QTR_Font1, 18);
   if (WorldMapFrame and WorldMapFrame:IsVisible()) then
@@ -1973,11 +2001,76 @@ end
 
 
 -- Set the gossip greeting text with explicit font and alignment.
+local QTR_GossipGreetingTextTargetWidth = 270;
+local QTR_GossipGreetingTextOffsetX = 10;
+local QTR_GossipGreetingTextOffsetY = -10;
+local QTR_GossipGreetingArabicOffsetX = -2;
+local QTR_GossipGreetingArabicExtraWidth = 4;
+
+
+local function QTR_EnsureGossipGreetingWidth(useArabicLayout)
+   if (not GossipGreetingText) then
+      return nil;
+   end
+
+   local targetWidth = QTR_GossipGreetingTextTargetWidth;
+   local parentFrame = GossipGreetingText:GetParent();
+   if (parentFrame and parentFrame.GetWidth) then
+      local parentWidth = parentFrame:GetWidth();
+      if (parentWidth and parentWidth > 0) then
+         local parentPadding = useArabicLayout and 15 or 20;
+         targetWidth = math.min(targetWidth, parentWidth - parentPadding);
+      end
+   end
+
+   if (useArabicLayout) then
+      targetWidth = targetWidth + QTR_GossipGreetingArabicExtraWidth;
+   end
+
+   if (targetWidth < 220) then
+      targetWidth = 220;
+   end
+
+   GossipGreetingText:SetWidth(targetWidth);
+   QTR_FontStringWidthCache[GossipGreetingText] = targetWidth;
+
+   if (useArabicLayout) then
+      return targetWidth + (QTR_GetRTLWidthAdjustment(GossipGreetingText, GossipGreetingText) or 0);
+   end
+
+   return targetWidth;
+end
+
+
+local function QTR_UpdateGossipGreetingAnchor(useArabicLayout)
+   if (not GossipGreetingText) then
+      return;
+   end
+
+   local parentFrame = GossipGreetingText:GetParent();
+   if (not parentFrame) then
+      return;
+   end
+
+   local offsetX = QTR_GossipGreetingTextOffsetX;
+   if (useArabicLayout) then
+      offsetX = offsetX + QTR_GossipGreetingArabicOffsetX;
+   end
+
+   GossipGreetingText:ClearAllPoints();
+   GossipGreetingText:SetPoint("TOPLEFT", parentFrame, "TOPLEFT", offsetX, QTR_GossipGreetingTextOffsetY);
+end
+
+
 local function QTR_SetGossipGreetingText(text, fontName, fontSize, justify)
-   GossipGreetingText:SetText(text or "");
+   local useArabicLayout = text and AS_ContainsArabic and AS_ContainsArabic(text);
+   fontName = fontName or ((useArabicLayout and QTR_Font1) or Original_Font2);
+   QTR_EnsureGossipGreetingWidth(useArabicLayout);
+   QTR_UpdateGossipGreetingAnchor(useArabicLayout);
    GossipGreetingText:SetFont(fontName, fontSize);
-   QTR_ApplyRTLWidthAdjustment(GossipGreetingText, text and AS_ContainsArabic and AS_ContainsArabic(text), GossipGreetingText);
+   QTR_ApplyRTLWidthAdjustment(GossipGreetingText, useArabicLayout, GossipGreetingText);
    GossipGreetingText:SetJustifyH(justify or "LEFT");
+   GossipGreetingText:SetText(text or "");
 end
 
 
@@ -2108,6 +2201,17 @@ local function QTR_RestoreGossipButtons(savedTexts, fontName, fontSize)
 end
 
 
+local function QTR_RestoreVisibleGossipTitleButtons()
+   local maxGossipButtons = NUMGOSSIPBUTTONS or 32;
+   for i = 1, maxGossipButtons do
+      local titleButton = _G["GossipTitleButton"..tostring(i)];
+      if (titleButton and titleButton:IsShown()) then
+         QTR_RestoreTitleButtonFont(titleButton);
+      end
+   end
+end
+
+
 -- Force the quest log to redraw its original Blizzard text.
 local function QTR_RestoreQuestLogEnglish()
   if (not QuestLogFrame or not QuestLogFrame:IsVisible()) then
@@ -2207,10 +2311,10 @@ function GS_ON_OFF_QUEST()
       QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(QTR_QuestGreetingHash).."] EN");
    else
       QTR_QuestGreetingState="1";
-      local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[QTR_QuestGreetingHash], GreetingText:GetWidth(), 13);
-      QTR_SetQuestGreetingText(Greeting_AR, QTR_Font2, 13, "RIGHT");
+      local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[QTR_QuestGreetingHash], GreetingText:GetWidth(), 13, QTR_Font1);
+      QTR_SetQuestGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
       QTR_SetQuestGreetingHeaders(true);
-      QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsAR, QTR_Font2, 13);
+      QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsAR, QTR_Font1, 13);
       QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(QTR_QuestGreetingHash).."] AR");
    end
 end
@@ -2242,8 +2346,8 @@ function QTR_QuestGreeting_Show()
       QTR_GS[Hash] = Greeting_Text;
       if ( GS_Gossip[Hash] ) then
          QTR_QuestGreetingState = "1";
-         local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[Hash], GreetingText:GetWidth(), 13);
-         QTR_SetQuestGreetingText(Greeting_AR, QTR_Font2, 13, "RIGHT");
+         local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[Hash], GreetingText:GetWidth(), 13, QTR_Font1);
+         QTR_SetQuestGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
          QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
          QTR_ToggleButtonQG:Enable();
       else
@@ -2274,7 +2378,7 @@ function QTR_QuestGreeting_Show()
                local translatedQuestButtonText = prefix .. questTitleAR .. suffix;
                QTR_QuestGreetingButtonsEN[questButton] = questButton:GetText();
                QTR_QuestGreetingButtonsAR[questButton] = translatedQuestButtonText;
-               QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font2, 13);
+               QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font1, 13);
             end
          end
       end
@@ -2288,18 +2392,28 @@ end
 
 -- Switch gossip text and buttons between original and translated versions.
 function GS_ON_OFF()
+   if (QTR_ToggleButtonGS) then
+      QTR_ToggleButtonGS:Enable();
+   end
+
    if (curr_goss=="1") then         -- turn off translation - show original text
       curr_goss="0";
-      QTR_SetGossipGreetingText(QTR_GS[curr_hash], Original_Font2, 13, "LEFT");
-      QTR_RestoreGossipButtons(QTR_GossipButtonsEN, Original_Font2, 13);
+      local originalGreetingText = QTR_GS[curr_hash];
+      if ((not originalGreetingText or originalGreetingText == "") and type(GetGossipText) == "function") then
+         originalGreetingText = GetGossipText();
+      end
+      if (type(GossipFrameUpdate) == "function") then
+         QTR_SuppressGossipRefreshHook = true;
+         GossipFrameUpdate();
+         QTR_SuppressGossipRefreshHook = false;
+      end
+      QTR_RestoreVisibleGossipTitleButtons();
+      QTR_SetGossipGreetingText(originalGreetingText, Original_Font2, 13, "LEFT");
       QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(curr_hash).."] EN");
    else                             -- show translation AR
       curr_goss="1";
-      local Greeting_PL = GS_Gossip[curr_hash];
-      local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, GossipGreetingText:GetWidth(), 13);
-      QTR_SetGossipGreetingText(Greeting_AR, QTR_Font2, 13, "RIGHT");
-      QTR_RestoreGossipButtons(QTR_GossipButtonsAR, QTR_Font2, 13);
-      QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(curr_hash).."] AR");
+      QTR_Gossip_Show();
+      return;
    end
 end
 
@@ -2307,11 +2421,17 @@ end
 -- Hash, look up, save, and apply gossip translations for the current NPC window.
 function QTR_Gossip_Show()
    local Nazwa_NPC = GossipFrameNpcNameText:GetText();
+   local previousHash = curr_hash;
+   local previousState = curr_goss;
+   local showArabicGossip = true;
    curr_hash = 0;
    QTR_GossipButtonsEN = {};
    QTR_GossipButtonsAR = {};
    if (Nazwa_NPC) then
       local Greeting_Text = GossipGreetingText:GetText();
+      if (type(GetGossipText) == "function") then
+         Greeting_Text = GetGossipText() or Greeting_Text;
+      end
       if (string.find(Greeting_Text," ")==nil) then         -- not Polish text (no non-breaking space)
          Nazwa_NPC = string.gsub(Nazwa_NPC, '"', '\"');
          Greeting_Text = string.gsub(Greeting_Text, '"', '\"');
@@ -2320,11 +2440,20 @@ function QTR_Gossip_Show()
          curr_hash = Hash;
          QTR_GS[Hash] = Greeting_Text;                      -- save original text
          if ( GS_Gossip[Hash] ) then   -- translation of this NPC's GOSSIP text exists
-            curr_goss = "1";
-            local Greeting_PL = GS_Gossip[Hash];
-            local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, GossipGreetingText:GetWidth(), 13);
-            QTR_SetGossipGreetingText(Greeting_AR, QTR_Font2, 13, "RIGHT");
-            QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
+            if (previousHash == Hash and previousState == "0") then
+               curr_goss = "0";
+               showArabicGossip = false;
+               QTR_RestoreVisibleGossipTitleButtons();
+               QTR_SetGossipGreetingText(Greeting_Text, Original_Font2, 13, "LEFT");
+               QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
+            else
+               curr_goss = "1";
+               showArabicGossip = true;
+               local Greeting_PL = GS_Gossip[Hash];
+               local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, QTR_EnsureGossipGreetingWidth(true), 13, QTR_Font1);
+               QTR_SetGossipGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
+               QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
+            end
             QTR_ToggleButtonGS:Enable();
          else                               -- no translation in GOSSIP database
             curr_goss = "0";
@@ -2353,7 +2482,9 @@ function QTR_Gossip_Show()
                   local translatedQuestButtonText = prefix .. questTitleAR .. suffix;
                   QTR_GossipButtonsEN[questButton] = questButton:GetText();
                   QTR_GossipButtonsAR[questButton] = translatedQuestButtonText;
-                  QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font2, 13);
+                  if (showArabicGossip) then
+                     QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font1, 13);
+                  end
                end
             end
          end
@@ -2367,10 +2498,12 @@ function QTR_Gossip_Show()
                      local Hash = StringHash(gostxt);
                      if ( GS_Gossip[Hash] ) then   -- translation of additional text exists
                         local optionWidth = QTR_GetGossipOptionWidth(titleButton);
-                        local Gossip_AR = QTR_PrepareGossipDisplayText(GS_Gossip[Hash], optionWidth, 13);
+                        local Gossip_AR = QTR_PrepareGossipDisplayText(GS_Gossip[Hash], optionWidth, 13, QTR_Font1);
                         QTR_GossipButtonsEN[titleButton] = gostxt;
                         QTR_GossipButtonsAR[titleButton] = Gossip_AR;
-                        QTR_SetTitleButtonText(titleButton, Gossip_AR, QTR_Font2, 13);
+                        if (showArabicGossip) then
+                           QTR_SetTitleButtonText(titleButton, Gossip_AR, QTR_Font1, 13);
+                        end
                      else
                         QTR_GOSSIP[Nazwa_NPC..'@'..tostring(Hash)] = gostxt.."@"..QTR_name..":"..QTR_race..":"..QTR_class;
                      end
@@ -2422,7 +2555,12 @@ function Tut_TutorialShowDelayed()
       TutorialFrameTitle:SetText(Tut_tytul);
 
       local _font2, _size2, _2 = TutorialFrameText:GetFont();
-      TutorialFrameText:SetFont(QTR_Font2, _size2);  
+      TutorialFrameText:SetFont(QTR_Font2, _size2);
+      local tutorialTextWidth = TutorialFrameText:GetWidth();
+      if (not tutorialTextWidth or tutorialTextWidth < 240 or tutorialTextWidth > 340) then
+         tutorialTextWidth = 300;
+      end
+      TutorialFrameText:SetWidth(tutorialTextWidth);
       if (Tut_tekst and AS_ContainsArabic and AS_ContainsArabic(Tut_tekst)) then
          Tut_tekst = string.gsub(Tut_tekst, "|n", "\n");
          
@@ -2443,13 +2581,12 @@ function Tut_TutorialShowDelayed()
 
          -- TutorialFrameText:GetWidth() is often wildly uninitialized (e.g., 10 or 1024) across the very first frame render,
          -- which destroys the width constraint logic. We clamp it strictly to its intended static pixel width.
-         local w = TutorialFrameText:GetWidth();
-         if not w or w < 200 or w > 300 then w = 272; end
+         local w = tutorialTextWidth;
          
          local shapedText = ""
          for paragraph in string.gmatch(Tut_tekst .. "\n", "(.-)\n") do
             if paragraph ~= "" then
-                local shapedPara = AS_ReverseAndPrepareLineText(paragraph, w, _size2)
+                local shapedPara = AS_ReverseAndPrepareLineText(paragraph, w, QTR_Font2, _size2)
                 if shapedText == "" then
                     shapedText = shapedPara
                 else

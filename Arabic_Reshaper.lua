@@ -800,22 +800,23 @@ end
 -------------------------------------------------------------------------------------------------------
 -- the function prepares Arabic text to be displayed in a specific window width
 
-function AS_ReverseAndPrepareLineText(Atext, Awidth, AfontSize)
+function AS_ReverseAndPrepareLineText(Atext, Awidth, Afont, AfontSize)
    local retstr = "";
    if (Atext and Awidth and AfontSize) then
       if (AS_TestLine == nil) then -- a own frame for displaying the translation of texts and determining the length
          AS_CreateTestLine();
       end
+      if (not Afont) then
+         Afont = QTR_Font2;
+      end
       Atext = string.gsub(Atext, " #", "#");
       Atext = string.gsub(Atext, "# ", "#");
       local bytes = strlen(Atext);
       local pos = 1;
-      local counter = 0;
       local link_start_stop = false;
       local newstr = "";
       local nextstr = "";
       local charbytes;
-      local newstrR;
       local char1 = "";
       local char2 = "";
       local last_space = 0;
@@ -838,22 +839,21 @@ function AS_ReverseAndPrepareLineText(Atext, Awidth, AfontSize)
             last_space = last_space + charbytes;
          end
          if (link_start_stop == false) then -- nie jesteśmy wewnątrz linku - można sprawdzać
-            AS_TestLine:SetWidth(Awidth);   -- set the frame width to the text
-            AS_TestLine.text:SetFont(QTR_Font2, AfontSize);
+            AS_TestLine.text:SetWidth(Awidth);   -- set the text width used for wrap measurement
+            AS_TestLine.text:SetFont(Afont, AfontSize);
             AS_TestLine.text:SetText(AS_UTF8reverse(newstr));
             if ((char1 == '#') or (AS_TestLine.text:GetHeight() > AfontSize * 1.5)) then -- tekst nie mieści się już w 1 linii
                newstr = string.sub(newstr, 1, strlen(newstr) - last_space);              -- tekst do ostatniej spacji
                newstr = string.gsub(newstr, "#", "");
-               retstr = retstr .. AS_AddSpaces(AS_UTF8reverse(newstr), Awidth, AfontSize) .. "\n";
+               retstr = retstr .. AS_UTF8reverse(newstr) .. "\n";
                newstr = nextstr;
                nextstr = "";
-               counter = 0;
             end
          end
          char2 = char1; -- zapamiętaj znak, potrzebne w następnej pętli
          pos = pos + charbytes;
       end
-      retstr = retstr .. AS_AddSpaces(AS_UTF8reverse(newstr), Awidth, AfontSize);
+      retstr = retstr .. AS_UTF8reverse(newstr);
       retstr = string.gsub(retstr, "#", "");
       retstr = string.gsub(retstr, " \n", "\n"); -- space before newline code is useless
       retstr = string.gsub(retstr, "\n ", "\n"); -- space after newline code is useless
@@ -865,16 +865,19 @@ end
 -------------------------------------------------------------------------------------------------------
 -- the function appends spaces to the left of the given text so that the text is aligned to the right
 
-function AS_AddSpaces(txt, width, fontsize)
+function AS_AddSpaces(txt, width, fontfile, fontsize)
    local chars_limitC = 300;    -- so much max. characters can fit on one line
 
    if (AS_TestLine == nil) then -- a own frame for displaying the translation of texts and determining the length
       AS_CreateTestLine();
    end
+   if (not fontfile) then
+      fontfile = QTR_Font2;
+   end
    local count = 0;
    local text = txt;
    AS_TestLine.text:SetWidth(width);
-   AS_TestLine.text:SetFont(QTR_Font2, fontsize);
+   AS_TestLine.text:SetFont(fontfile, fontsize);
    AS_TestLine.text:SetText(text);
    while ((AS_TestLine.text:GetHeight() < fontsize * 1.5) and (count < chars_limitC)) do
       count = count + 1;
