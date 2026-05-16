@@ -1,4 +1,4 @@
-﻿-- Addon: WoWAR (Version: 12.02) (Date: 2026-03-19)
+-- Addon: WoWAR (Version: 12.02) (Date: 2026-03-19)
 -- Authors: Platine, Dragonarab[DiNaSoR]
 -- Based on: UTF8 library by Kyle Smith
 -- Enhanced: Added diacritics, Persian/Urdu support, performance optimizations, and bug fixes
@@ -90,7 +90,7 @@ AS_ArabicPunctuation = {
 AS_Reshaping_Rules = {
    -- ===== BASIC ARABIC ALPHABET (28 letters + variants) =====
    ["\216\167"] = { isolated = "\216\167", initial = "\216\167", middle = "\239\186\142", final = "\239\186\142" },                 -- ALEF (ا) U+0627
-   ["\216\162"] = { isolated = "\239\186\129", initial = "\239\186\129", middle = "\239\186\142", final = "\239\186\142" },         -- ALEF WITH MADDA ABOVE (آ) U+0622
+   ["\216\162"] = { isolated = "\216\162", initial = "\216\162", middle = "\239\186\130", final = "\239\186\130" },                 -- ALEF WITH MADDA ABOVE (آ) U+0622
    ["\216\163"] = { isolated = "\216\163", initial = "\216\163", middle = "\239\186\132", final = "\239\186\132" },                 -- ALEF WITH HAMZA ABOVE (أ) U+0623
    ["\216\165"] = { isolated = "\216\165", initial = "\216\165", middle = "\239\186\136", final = "\239\186\136" },                 -- ALEF WITH HAMZA BELOW (إ) U+0625
    ["\216\168"] = { isolated = "\216\168", initial = "\239\186\145", middle = "\239\186\146", final = "\239\186\144" },             -- BEH (ب) U+0628
@@ -153,7 +153,7 @@ AS_Reshaping_Rules2 = {
 };
 
 AS_Reshaping_Rules3 = {
-   --["ا".."ل".."آ"] = {isolated = "ﻵا",  initial="ﻵا", middle="ﻵا", final="ﻶا"},        -- Arabic ligature ALEF+LAM+(ALEF with MADA)
+   --["\216\167" .. "\217\132" .. "\216\162"] = { isolated = "\239\187\181\216\167", initial = "\239\187\181\216\167", middle = "\239\187\181\216\167", final = "\239\187\182\216\167" }, -- ALEF + LAM + ALEF WITH MADDA (الآ)
 };
 
 -------------------------------------------------------------------------------------------------------
@@ -198,6 +198,13 @@ function AS_ContainsArabic(s)
       local charbytes = AS_UTF8charbytes(s, pos);
       local char = strsub(s, pos, pos + charbytes - 1);
       if AS_Reshaping_Rules[char] then return true end
+      if charbytes >= 2 then
+         local b1, b2 = string.byte(char, 1, 2);
+         -- Presentation forms A & B start with EF B.. => 239, 186/187/188
+         if (b1 == 216 or b1 == 217 or (b1 == 239 and (b2 == 186 or b2 == 187 or b2 == 188))) then
+            return true;
+         end
+      end
       pos = pos + charbytes;
    end
    return false;
@@ -581,6 +588,8 @@ function AS_UTF8reverse(s)
       else
          local char2 = nil;
          local charbytes2 = 0;
+         local char3 = nil;
+         local charbytes3 = 0;
          local lookPos = pos;
 
          while lookPos <= bytes do
@@ -598,7 +607,42 @@ function AS_UTF8reverse(s)
          local ligatureApplied = false;
          local ligatureForm = nil;
 
-         if char2 and AS_Reshaping_Rules2[char1 .. char2] then
+         if char2 then
+            local lookPos3 = lookPos + charbytes2;
+            while lookPos3 <= bytes do
+               local tempBytes = AS_UTF8charbytes(s, lookPos3);
+               local tempChar = strsub(s, lookPos3, lookPos3 + tempBytes - 1);
+               if AS_IsDiacritic(tempChar) then
+                  lookPos3 = lookPos3 + tempBytes;
+               else
+                  char3 = tempChar;
+                  charbytes3 = tempBytes;
+                  break;
+               end
+            end
+         end
+
+         if char2 and char3 and AS_Reshaping_Rules3[char1 .. char2 .. char3] then
+            ligatureForm = AS_Reshaping_Rules3[char1 .. char2 .. char3];
+            ligatureApplied = true;
+            pos = lookPos + charbytes2 + charbytes3;
+
+            while pos <= bytes do
+               local skipBytes = AS_UTF8charbytes(s, pos);
+               local skipChar = strsub(s, pos, pos + skipBytes - 1);
+               if AS_IsDiacritic(skipChar) then
+                  pos = pos + skipBytes;
+               else
+                  break;
+               end
+            end
+
+            lookPos = pos;
+            char2 = nil;
+            char3 = nil;
+         end
+
+         if (not ligatureApplied) and char2 and AS_Reshaping_Rules2[char1 .. char2] then
             ligatureForm = AS_Reshaping_Rules2[char1 .. char2];
             ligatureApplied = true;
             pos = lookPos + charbytes2;

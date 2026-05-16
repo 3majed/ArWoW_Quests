@@ -1,6 +1,6 @@
 ﻿## Interface: 30300
 ## Title: ArWoW_Quests
-## Version: 0.1
+## Version: 1.0
 ## Author: Majed
 ## DefaultState: Enabled
 ## LoadOnDemand: 0
@@ -16,4 +16,3 @@ TutorialsData_AR.lua
 Arabic_Reshaper.lua
 
 ArWoW_Quests.lua
-ArWoW_QuestsFrames.xml

@@ -5,3 +5,7 @@ objective_cleanup_with_context.patch
 objective_cleanup.patch
 TRANSLATE_INSTRUCTIONS.md
 WoWinArabic_Chat--not for wotlk but see how it works.lua
+Gossip_AR.lua.bak
+hash_test.lua
+QuestData_AR_wotlk.lua.backup
+.gitignore

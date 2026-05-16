@@ -1,10 +1,10 @@
-﻿-- Addon: WoWpoPolsku-Quests (version: 3.07) 2022.10.14
--- Description: AddOn displays translated quest information in original or separete window.
--- Autor: Platine  (e-mail: platine.wow@gmail.com)
--- WWW: https://wowpopolsku.pl
+﻿-- Addon: ArWoW_Quests (version: 1.0.0) 2026.05.16
+-- Description: AddOn displays translated quest information in the original windows.
+-- Author: Majed
+-- WWW: https://github.com/3majed
 
 -- Global Variables
-local QTR_version = "3.06";
+local QTR_version = "1.0.0";
 local QTR_name = UnitName("player");
 local QTR_class= UnitClass("player");
 local QTR_race = UnitRace("player");
@@ -37,14 +37,9 @@ local QTR_MessOrig = {
       avaiquests = "Available Quests", };
 local Original_Font1 = "Fonts\\MORPHEUS.ttf";
 local Original_Font2 = "Fonts\\FRIZQT__.ttf";
-local QTR_QuestBodyLimit = 37;
-local QTR_FrameBodyLimit = 45;
-local QTR_Interface2 = {
-	mode1a     = "استبدل الترجمة مباشرة في النافذة",
-	mode1b     = "التي تحتوي على النص الأصلي",
-	mode2a     = "اعرض الترجمة في نافذة منفصلة",
-	mode2b     = "بجانب النص الأصلي",
-      };
+local QTR_QuestBodyLimit = 35;
+local QTR_WorldMapObjectiveLimit = 28;
+local QTR_WatchFrameObjectiveLimit = 24;
 local Tut_ID = 0;
 local Tut_race = string.gsub(strupper(QTR_race)," ","");
 local Tut_class= string.gsub(strupper(QTR_class)," ","");
@@ -103,42 +98,32 @@ if (p_class[QTR_class]) then
    player_class = { M1=p_class[QTR_class].M1, D1=p_class[QTR_class].D1, C1=p_class[QTR_class].C1, B1=p_class[QTR_class].B1, N1=p_class[QTR_class].N1, K1=p_class[QTR_class].K1, W1=p_class[QTR_class].W1, M2=p_class[QTR_class].M2, D2=p_class[QTR_class].D2, C2=p_class[QTR_class].C2, B2=p_class[QTR_class].B2, N2=p_class[QTR_class].N2, K2=p_class[QTR_class].K2, W2=p_class[QTR_class].W2 };
 else
    player_class = { M1=QTR_class, D1=QTR_class, C1=QTR_class, B1=QTR_class, N1=QTR_class, K1=QTR_class, W1=QTR_class, M2=QTR_class, D2=QTR_class, C2=QTR_class, B2=QTR_class, N2=QTR_class, K2=QTR_class, W2=QTR_class };
-   DEFAULT_CHAT_FRAME:AddMessage("|cff55ff00QTR - فئة جديدة: "..QTR_class);
+   DEFAULT_CHAT_FRAME:AddMessage("|cff55ff00QTR - كلاس جديد: "..QTR_class);
 end
 
 
 
 function Spr_Gender(msg)
-   local nr_1, nr_2, nr_3 = 0;
-   local QTR_forma = "";
-   local nr_poz = string.find(msg, "YOUR_GENDER");    -- gdy nie znalazł, jest: nil; liczy od 1
-   while (nr_poz and nr_poz>0) do
-      nr_1 = nr_poz + 1;   
-      while (string.sub(msg, nr_1, nr_1) ~= "(") do   -- szukaj nawiasu otwierającego
-         nr_1 = nr_1 + 1;
-      end
-      if (string.sub(msg, nr_1, nr_1) == "(") then
-         nr_2 =  nr_1 + 1;
-         while (string.sub(msg, nr_2, nr_2) ~= ";") do   -- szukaj średnika oddzielającego
-            nr_2 = nr_2 + 1;
-         end
-         if (string.sub(msg, nr_2, nr_2) == ";") then
-            nr_3 = nr_2 + 1;
-            while (string.sub(msg, nr_3, nr_3) ~= ")") do   -- szykaj nawiasu zamykającego
-               nr_3 = nr_3 + 1;
-            end
-            if (string.sub(msg, nr_3, nr_3) == ")") then
-               if (QTR_sex==3) then        -- feminine form
-                  QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
-               else                        -- masculine form
-                  QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
-               end
-               msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
-            end   
-         end
-      end
-      nr_poz = string.find(msg, "YOUR_GENDER");
-   end
+   msg = string.gsub(msg, "%$[gG]%s*([^:;؛]+)%s*:%s*([^;؛]+)%s*[;؛]", function(masc, fem)
+      return (QTR_sex == 3) and fem or masc
+   end)
+   msg = string.gsub(msg, "%$[tT]%s*([^:;؛]+)%s*:%s*([^;؛]+)%s*[;؛]", function(masc, fem)
+      return (QTR_sex == 3) and fem or masc
+   end)
+   msg = string.gsub(msg, "%$[tT]%s*([^:;؛]+)%s*[;؛]", "%1")
+   -- Replace {g} masc : fem ; or ؛
+   msg = string.gsub(msg, "{[gG]}%s*([^:;؛]+)%s*:%s*([^:;؛]+)%s*[;؛]?", function(masc, fem)
+      return (QTR_sex == 3) and fem or masc
+   end)
+   -- Replace {g masc : fem} or {G masc : fem}
+   msg = string.gsub(msg, "{[gG]%s*([^:}]+)%s*:%s*([^}]+)}", function(masc, fem)
+      return (QTR_sex == 3) and fem or masc
+   end)
+   -- YOUR_GENDER(x;y)
+   msg = string.gsub(msg, "YOUR_GENDER%s*%(([^;]+);([^)]+)%)", function(masc, fem)
+      return (QTR_sex == 3) and fem or masc
+   end)
+
    return msg;
 end
 
@@ -410,10 +395,62 @@ local function QTR_ReverseBodyText(text, limit)
 end
 
 
+local QTR_FontStringWidthCache = {};
+local QTR_RTLWidthAdjustments = {
+   GossipGreetingText = 10,
+   QuestProgressText = 10,
+   QuestProgressRequiredItemsText = -10,
+};
+
+
+local function QTR_GetRTLWidthAdjustment(fontString, ownerFrame)
+  if (not fontString) then
+     return nil;
+  end
+
+  local fontStringName = fontString.GetName and fontString:GetName();
+  if (fontStringName and QTR_RTLWidthAdjustments[fontStringName]) then
+     return QTR_RTLWidthAdjustments[fontStringName];
+  end
+
+  return nil;
+end
+
+
+local function QTR_ApplyRTLWidthAdjustment(fontString, useArabicLayout, ownerFrame)
+  if (not fontString or not fontString.GetName) then
+     return;
+  end
+
+  local widthAdjustment = QTR_GetRTLWidthAdjustment(fontString, ownerFrame);
+  if (not widthAdjustment) then
+     return;
+  end
+
+  local baseWidth = QTR_FontStringWidthCache[fontString];
+  local currentWidth = fontString:GetWidth();
+  if ((not baseWidth or baseWidth <= 0) and currentWidth and currentWidth > 0) then
+     baseWidth = currentWidth;
+     QTR_FontStringWidthCache[fontString] = currentWidth;
+  end
+
+  if (not baseWidth or baseWidth <= 0) then
+     return;
+  end
+
+  if (useArabicLayout) then
+     fontString:SetWidth(baseWidth + widthAdjustment);
+  else
+     fontString:SetWidth(baseWidth);
+  end
+end
+
+
 -- Apply fonts, alignment, and Arabic shaping through one shared display helper.
 local function QTR_SetShapedText(fontString, text, fontName, fontSize, limit)
   fontString:SetFont(fontName, fontSize);
   if (text and AS_ContainsArabic and AS_ContainsArabic(text)) then
+     QTR_ApplyRTLWidthAdjustment(fontString, true);
      fontString:SetJustifyH("RIGHT");
      if (limit) then
         fontString:SetText(QTR_ReverseBodyText(text, limit));
@@ -421,6 +458,7 @@ local function QTR_SetShapedText(fontString, text, fontName, fontSize, limit)
         fontString:SetText(QTR_ReverseText(text));
      end
   else
+     QTR_ApplyRTLWidthAdjustment(fontString, false);
      fontString:SetJustifyH("LEFT");
      fontString:SetText(text or "");
   end
@@ -491,42 +529,20 @@ local function QTR_GetTranslatedQuestTitleById(questId)
 end
 
 
--- Expand player, race, class, and gender placeholders inside gossip text.
+-- Expand gossip placeholders through the shared text placeholder engine.
 local function QTR_ExpandGossipInfo(msg)
   if (not msg or msg == "") then
      return msg or "";
   end
 
-  msg = string.gsub(msg, "{B}", "#");
-  msg = string.gsub(msg, "NEW_LINE", "#");
+  msg = string.gsub(msg, "^@DI", "");
+  msg = string.gsub(msg, "^@OP", "");
+
+  msg = QTR_ExpandUnitInfo(msg);
   msg = string.gsub(msg, "\r\n", "#");
   msg = string.gsub(msg, "\r", "#");
   msg = string.gsub(msg, "\n", "#");
-
-  msg = string.gsub(msg, "{N}", AS_UTF8reverse(QTR_name));
-  msg = string.gsub(msg, "YOUR_NAME0", AS_UTF8reverse(string.upper(QTR_name)));
-  msg = string.gsub(msg, "YOUR_NAME1", AS_UTF8reverse(QTR_name));
-  msg = string.gsub(msg, "YOUR_NAME2", AS_UTF8reverse(QTR_name));
-  msg = string.gsub(msg, "YOUR_NAME3", AS_UTF8reverse(QTR_name));
-  msg = string.gsub(msg, "YOUR_NAME4", AS_UTF8reverse(QTR_name));
-  msg = string.gsub(msg, "YOUR_NAME5", AS_UTF8reverse(QTR_name));
-  msg = string.gsub(msg, "YOUR_NAME6", AS_UTF8reverse(QTR_name));
-  msg = string.gsub(msg, "YOUR_NAME7", AS_UTF8reverse(QTR_name));
-  msg = string.gsub(msg, "YOUR_NAME", AS_UTF8reverse(QTR_name));
-
-  if (QTR_sex == 3) then
-     msg = string.gsub(msg, "{C}", player_class.M2);
-     msg = string.gsub(msg, "{R}", player_race.M2);
-     msg = string.gsub(msg, "YOUR_CLASS", player_class.M2);
-     msg = string.gsub(msg, "YOUR_RACE", player_race.M2);
-  else
-     msg = string.gsub(msg, "{C}", player_class.M1);
-     msg = string.gsub(msg, "{R}", player_race.M1);
-     msg = string.gsub(msg, "YOUR_CLASS", player_class.M1);
-     msg = string.gsub(msg, "YOUR_RACE", player_race.M1);
-  end
-
-  return Spr_Gender(msg);
+  return msg;
 end
 
 
@@ -572,8 +588,15 @@ local function QTR_NormalizeGossipHashText(text)
    hashText = string.gsub(hashText, '$N$', '');
    hashText = string.gsub(hashText, '$N', '');
    hashText = string.gsub(hashText, '$B', '');
+   hashText = string.gsub(hashText, '$b', '');
    hashText = string.gsub(hashText, '$R', '');
    hashText = string.gsub(hashText, '$C', '');
+   -- Collapse runs of whitespace to a single space and trim ends so that
+   -- spacing differences (e.g. 2 vs 4 spaces around line-breaks) never
+   -- produce different hash values for the same NPC greeting text.
+   hashText = string.gsub(hashText, '%s+', ' ');
+   hashText = string.gsub(hashText, '^%s+', '');
+   hashText = string.gsub(hashText, '%s+$', '');
    return hashText;
 end
 
@@ -599,9 +622,11 @@ local function QTR_SetTitleButtonText(titleButton, text, fontName, fontSize)
      end
 
      fontString:SetFont(fontName, fontSize);
-     local isQuestTitleButton = titleButton:GetName() and string.find(titleButton:GetName(), "^QuestTitleButton");
+     local titleButtonName = titleButton:GetName();
+     local isQuestTitleButton = titleButtonName and string.find(titleButtonName, "^QuestTitleButton");
+     local isGossipTitleButton = titleButtonName and string.find(titleButtonName, "^GossipTitleButton");
 
-     if (isQuestTitleButton and not QTR_TitleButtonAnchorCache[titleButton]) then
+     if ((isQuestTitleButton or isGossipTitleButton) and not QTR_TitleButtonAnchorCache[titleButton]) then
         local pointCount = fontString:GetNumPoints();
         local savedPoints = {};
         for index = 1, pointCount do
@@ -611,15 +636,20 @@ local function QTR_SetTitleButtonText(titleButton, text, fontName, fontSize)
      end
 
      if (text and AS_ContainsArabic and AS_ContainsArabic(text)) then
+        QTR_ApplyRTLWidthAdjustment(fontString, true, titleButton);
         fontString:SetJustifyH("RIGHT");
         if (isQuestTitleButton) then
            fontString:ClearAllPoints();
            fontString:SetPoint("TOPLEFT", titleButton, "TOPLEFT", 0, 0);
            fontString:SetPoint("TOPRIGHT", titleButton, "TOPRIGHT", -10, 0);
+        elseif (isGossipTitleButton) then
+           fontString:ClearAllPoints();
+           fontString:SetPoint("LEFT", titleButton, "LEFT", 10, 0);
         end
      else
+        QTR_ApplyRTLWidthAdjustment(fontString, false, titleButton);
         fontString:SetJustifyH("LEFT");
-        if (isQuestTitleButton and QTR_TitleButtonAnchorCache[titleButton]) then
+        if ((isQuestTitleButton or isGossipTitleButton) and QTR_TitleButtonAnchorCache[titleButton]) then
            fontString:ClearAllPoints();
            for _, pointData in ipairs(QTR_TitleButtonAnchorCache[titleButton]) do
               fontString:SetPoint(unpack(pointData));
@@ -649,8 +679,12 @@ local function QTR_RestoreTitleButtonFont(titleButton)
      fontString:SetJustifyH("LEFT");
   end
 
-  local isQuestTitleButton = titleButton:GetName() and string.find(titleButton:GetName(), "^QuestTitleButton");
-  if (isQuestTitleButton and QTR_TitleButtonAnchorCache[titleButton]) then
+  QTR_ApplyRTLWidthAdjustment(fontString, false, titleButton);
+
+  local titleButtonName = titleButton:GetName();
+  local isQuestTitleButton = titleButtonName and string.find(titleButtonName, "^QuestTitleButton");
+  local isGossipTitleButton = titleButtonName and string.find(titleButtonName, "^GossipTitleButton");
+  if ((isQuestTitleButton or isGossipTitleButton) and QTR_TitleButtonAnchorCache[titleButton]) then
      fontString:ClearAllPoints();
      for _, pointData in ipairs(QTR_TitleButtonAnchorCache[titleButton]) do
         fontString:SetPoint(unpack(pointData));
@@ -909,41 +943,13 @@ function QTR_CheckVars()
   if (not QTR_PS["active"]) then
      QTR_PS["active"] = "1";   
   end
-  if (not QTR_PS["mode"] ) then
-     QTR_PS["mode"] = "1";   
-  end
+  QTR_PS["mode"] = nil;
   if (not QTR_PS["transtitle"] ) then
      QTR_PS["transtitle"] = "1";   
   end
-  if (not QTR_PS["transtitle_migrated"]) then
-     QTR_PS["transtitle"] = "1";
-     QTR_PS["transtitle_migrated"] = "1";
-  end
-  if (not QTR_PS["size"] ) then
-     QTR_PS["size"] = "1";   
-  end
-  if (not QTR_PS["width"] ) then
-     QTR_PS["width"] = "1";   
-  end
-
-  -- set check buttons 
-  if (QTR_PS["size"] == "1") then
-     QTR_SizeH = 1;
-  else 
-     QTR_SizeH = 2;     
-     QTRFrame1:SetHeight(525);
-     QTR_QuestDetail:SetHeight(430);
-     QTR_ToggleButton2:SetText("^");
-  end
-  if (QTR_PS["width"] == "1") then
-     QTR_SizeW = 1;
-  else 
-     QTR_SizeW = 2;     
-     QTRFrame1:SetWidth(525);
-     QTR_QuestDetail:SetWidth(495);
-     QTR_QuestTitle:SetWidth(495);
-     QTR_ToggleButton3:SetText("<");
-  end
+  QTR_PS["transtitle_migrated"] = nil;
+  QTR_PS["size"] = nil;
+  QTR_PS["width"] = nil;
   if (not QTR_PS["gossip"] ) then
      QTR_PS["gossip"] = "1";   
   end
@@ -961,15 +967,357 @@ end
 
 function QTR_SetCheckButtonState()
   QTRCheckButton0:SetChecked(QTR_PS["active"]=="1");
-  QTRCheckButton1:SetChecked(QTR_PS["mode"]=="1");
-  QTRCheckButton2:SetChecked(QTR_PS["mode"]=="2");
   QTRCheckButton3:SetChecked(QTR_PS["transtitle"]=="1");
-  QTRCheckButton4:SetChecked(QTR_PS["size"]=="1");
-  QTRCheckButton5:SetChecked(QTR_PS["size"]=="2");
-  QTRCheckButton6:SetChecked(QTR_PS["width"]=="1");
-  QTRCheckButton7:SetChecked(QTR_PS["width"]=="2");
   QTRCheckButtonGossip:SetChecked(QTR_PS["gossip"]=="1");
   QTRCheckButtonTutorial:SetChecked(QTR_PS["tutorial"]=="1");
+end
+
+
+local function QTR_UpdateQuestLogToggleButtonText()
+  if (not QTR_ToggleButton1) then
+     return;
+  end
+
+  if (QTR_PS and QTR_PS["active"] == "0") then
+     QTR_ToggleButton1:SetText("OG");
+  else
+     QTR_ToggleButton1:SetText("AR");
+  end
+end
+
+
+local function QTR_UpdateWorldMapQuestList()
+  if (not WorldMapFrame or not WorldMapFrame:IsVisible() or not WorldMapQuestShowObjectives or not WorldMapQuestShowObjectives:GetChecked()) then
+     return;
+  end
+
+  local lastFrame = nil;
+  for i = 1, MAX_NUM_QUESTS do
+     local questFrame = _G["WorldMapQuestFrame"..i];
+     if (not questFrame) then
+        break;
+     end
+
+     if (questFrame:IsShown()) then
+        local translatedObjective = nil;
+        questFrame.qtrOriginalTitle = questFrame.title:GetText();
+        if (QTR_PS and QTR_PS["active"] == "1" and questFrame.questId and questFrame.questId > 0) then
+           local questId = tostring(questFrame.questId);
+           local questData = QTR_QuestData and QTR_QuestData[questId];
+           if (questData) then
+              local _, titleSize = questFrame.title:GetFont();
+              local _, objectiveSize = questFrame.objectives:GetFont();
+              local _, dashesSize = questFrame.dashes:GetFont();
+              local originalObjectiveText = questFrame.objectives:GetText() or "";
+              local titleWidth = 240;
+
+              if (questFrame.check and questFrame.check:IsShown()) then
+                 titleWidth = 224;
+              end
+
+              questFrame.title:SetWidth(titleWidth);
+              if (QTR_PS["transtitle"] == "1") then
+                 QTR_SetShapedText(questFrame.title, QTR_GetTranslatedQuestTitleById(questId), QTR_Font1, titleSize or 13);
+              end
+
+              if (questData["Objectives"] and questData["Objectives"] ~= "" and not string.find(originalObjectiveText, "%d+/%d+")) then
+                 translatedObjective = QTR_ExpandUnitInfo(questData["Objectives"]);
+                 questFrame.objectives:SetWidth(232);
+                 QTR_SetShapedText(questFrame.objectives, translatedObjective, QTR_Font2, objectiveSize or 13, QTR_WorldMapObjectiveLimit);
+                 questFrame.dashes:SetFont(QTR_Font2, dashesSize or objectiveSize or 13);
+                 questFrame.dashes:SetJustifyH("RIGHT");
+                 questFrame.dashes:SetText("");
+              end
+           end
+        end
+
+        if (lastFrame) then
+           questFrame:ClearAllPoints();
+           questFrame:SetPoint("TOPLEFT", lastFrame, "BOTTOMLEFT", 0, 0);
+        else
+           questFrame:ClearAllPoints();
+           questFrame:SetPoint("TOPLEFT", WorldMapQuestScrollChildFrame, "TOPLEFT", 2, 0);
+        end
+
+        if (translatedObjective) then
+           questFrame:SetHeight(max(questFrame.title:GetHeight() + questFrame.objectives:GetHeight() + QUESTFRAME_PADDING, QUESTFRAME_MINHEIGHT));
+        end
+        lastFrame = questFrame;
+     end
+  end
+end
+
+
+local function QTR_RefreshWorldMapQuestList()
+  if (type(WorldMapFrame_UpdateQuests) ~= "function") then
+     return;
+  end
+
+  if (WorldMapFrame and WorldMapFrame:IsVisible() and WorldMapQuestShowObjectives and WorldMapQuestShowObjectives:GetChecked()) then
+     WorldMapFrame_UpdateQuests();
+  end
+end
+
+
+local function QTR_RestoreWatchFrameHeader()
+  if (not WatchFrame or not WatchFrameHeader or not WatchFrameTitle) then
+     return;
+  end
+
+  WatchFrameHeader:ClearAllPoints();
+  WatchFrameHeader:SetPoint("TOPLEFT", WatchFrame, "TOPLEFT", 0, -6);
+  WatchFrameTitle:ClearAllPoints();
+  WatchFrameTitle:SetPoint("TOPLEFT", WatchFrameHeader, "TOPLEFT", 0, 0);
+  if (GameFontNormal) then
+     WatchFrameTitle:SetFontObject(GameFontNormal);
+  end
+  WatchFrameTitle:SetJustifyH("LEFT");
+
+  local titleWidth = WatchFrameTitle:GetStringWidth() or 0;
+  if (titleWidth > 0) then
+     WatchFrameTitle:SetWidth(titleWidth);
+     WatchFrameHeader:SetWidth(titleWidth + 4);
+  else
+     WatchFrameTitle:SetWidth(0);
+  end
+end
+
+
+local function QTR_UpdateWatchFrameHeader()
+  if (not WatchFrame or not WatchFrameHeader or not WatchFrameTitle) then
+     return;
+  end
+
+  local displayText = (QTR_Messages and QTR_Messages.objectives) or "المهام";
+  local objectiveCount = string.match(WatchFrameTitle:GetText() or "", "%((%d+)%)");
+  if (objectiveCount) then
+     displayText = displayText .. " (" .. objectiveCount .. ")";
+  end
+
+  local _, titleSize = WatchFrameTitle:GetFont();
+  WatchFrameHeader:ClearAllPoints();
+  if (WatchFrameCollapseExpandButton) then
+     WatchFrameHeader:SetPoint("TOPRIGHT", WatchFrameCollapseExpandButton, "TOPLEFT", -4, -1);
+  else
+     WatchFrameHeader:SetPoint("TOPRIGHT", WatchFrame, "TOPRIGHT", -28, -6);
+  end
+  WatchFrameTitle:ClearAllPoints();
+  WatchFrameTitle:SetPoint("TOPRIGHT", WatchFrameHeader, "TOPRIGHT", 0, 0);
+  WatchFrameTitle:SetWidth(WATCHFRAME_MAXLINEWIDTH or WATCHFRAME_EXPANDEDWIDTH or WatchFrame:GetWidth() or 204);
+  QTR_SetShapedText(WatchFrameTitle, displayText, QTR_Font1, titleSize or 12);
+
+  local headerWidth = max(WatchFrameTitle:GetStringWidth() + 4, 40);
+  WatchFrameHeader:SetWidth(headerWidth);
+  WatchFrameTitle:SetWidth(headerWidth);
+end
+
+
+local function QTR_ConfigureWatchFrameLineLayout(line, useArabicLayout)
+  if (not line or not line.text or not line.dash) then
+     return;
+  end
+
+  local dashWidth = 0;
+  local dashText = line.dash:GetText();
+  if (line.dash:IsShown() and dashText and dashText ~= "") then
+     dashWidth = line.dash:GetWidth() or 0;
+  end
+
+  local lineWidth = WATCHFRAME_MAXLINEWIDTH or line:GetWidth() or 192;
+  if (lineWidth <= dashWidth) then
+     lineWidth = (WATCHFRAME_EXPANDEDWIDTH or 204) - 12;
+  end
+
+  line.dash:ClearAllPoints();
+  line.text:ClearAllPoints();
+  if (useArabicLayout) then
+     line.dash:SetPoint("TOPRIGHT", line, "TOPRIGHT", 0, -1);
+     line.dash:SetPoint("BOTTOMRIGHT", line, "BOTTOMRIGHT", 0, 0);
+     line.text:SetPoint("RIGHT", line.dash, "LEFT", 0, 0);
+     line.text:SetJustifyH("RIGHT");
+  else
+     line.dash:SetPoint("TOPLEFT", line, "TOPLEFT", 0, -1);
+     line.dash:SetPoint("BOTTOMLEFT", line, "BOTTOMLEFT", 0, 0);
+     line.text:SetPoint("LEFT", line.dash, "RIGHT", 0, 0);
+     line.text:SetJustifyH("LEFT");
+  end
+  line.text:SetWidth(max(lineWidth - dashWidth, 20));
+end
+
+
+local function QTR_FindWatchFramePOIButton(questID)
+  if (not questID or not WatchFrameLines or not WatchFrameLines.GetChildren) then
+     return nil;
+  end
+
+  for _, child in ipairs({ WatchFrameLines:GetChildren() }) do
+     if (child and child:IsShown() and child.questId == questID and child.parentName == "WatchFrameLines") then
+        return child;
+     end
+  end
+
+  return nil;
+end
+
+
+local function QTR_FindWatchFrameItemButton(questIndex)
+  if (not questIndex or not WatchFrameLines or not WatchFrameLines.GetChildren) then
+     return nil;
+  end
+
+  for _, child in ipairs({ WatchFrameLines:GetChildren() }) do
+     local childName = child and child.GetName and child:GetName();
+     if (child and child:IsShown() and child.GetID and child:GetID() == questIndex and childName and string.find(childName, "^WatchFrameItem")) then
+        return child;
+     end
+  end
+
+  return nil;
+end
+
+
+local function QTR_UpdateWatchFrameQuestIcons(titleLine, questIndex, questID, useArabicLayout)
+  if (not titleLine or not titleLine.text) then
+     return;
+  end
+
+  local poiButton = QTR_FindWatchFramePOIButton(questID);
+  local itemButton = QTR_FindWatchFrameItemButton(questIndex);
+
+  if (useArabicLayout) then
+     if (itemButton) then
+        itemButton:ClearAllPoints();
+        itemButton:SetPoint("TOPLEFT", titleLine, "TOPLEFT", -10, -2);
+     end
+     if (poiButton) then
+        poiButton:ClearAllPoints();
+        poiButton:SetPoint("TOPLEFT", titleLine, "TOPRIGHT", 0, 5);
+     end
+  else
+     if (itemButton) then
+        itemButton:ClearAllPoints();
+        itemButton:SetPoint("TOPRIGHT", titleLine, "TOPRIGHT", 10, -2);
+     end
+     if (poiButton) then
+        poiButton:ClearAllPoints();
+        poiButton:SetPoint("TOPRIGHT", titleLine, "TOPLEFT", 0, 5);
+     end
+  end
+end
+
+
+local function QTR_RestoreWatchFrameLineLayouts()
+  if (not WATCHFRAME_LINKBUTTONS) then
+     return;
+  end
+
+  for i = 1, #WATCHFRAME_LINKBUTTONS do
+     local linkButton = WATCHFRAME_LINKBUTTONS[i];
+     if (linkButton and linkButton:IsShown() and linkButton.type == "QUEST" and linkButton.lines and linkButton.startLine and linkButton.lastLine) then
+        local questIndex = GetQuestIndexForWatch and GetQuestIndexForWatch(linkButton.index);
+        local questID = nil;
+        if (questIndex) then
+           local _, _, _, _, _, _, _, _, restoreQuestID = GetQuestLogTitle(questIndex);
+           questID = restoreQuestID;
+        end
+        QTR_ConfigureWatchFrameLineLayout(linkButton.lines[linkButton.startLine], false);
+        QTR_UpdateWatchFrameQuestIcons(linkButton.lines[linkButton.startLine], questIndex, questID, false);
+        if (linkButton.lastLine >= linkButton.startLine + 1) then
+           QTR_ConfigureWatchFrameLineLayout(linkButton.lines[linkButton.startLine + 1], false);
+        end
+     end
+  end
+end
+
+
+local function QTR_UpdateWatchFrame()
+  if (not WatchFrame or not WatchFrame:IsShown()) then
+     return;
+  end
+
+  if (not QTR_PS or QTR_PS["active"] ~= "1") then
+     QTR_RestoreWatchFrameHeader();
+     QTR_RestoreWatchFrameLineLayouts();
+     return;
+  end
+
+  QTR_UpdateWatchFrameHeader();
+
+  if (not WatchFrameLines or not WatchFrameLines:IsShown() or not WATCHFRAME_LINKBUTTONS or not GetQuestIndexForWatch) then
+     return;
+  end
+
+  for i = 1, #WATCHFRAME_LINKBUTTONS do
+     local linkButton = WATCHFRAME_LINKBUTTONS[i];
+     if (linkButton and linkButton:IsShown() and linkButton.type == "QUEST" and linkButton.lines and linkButton.startLine and linkButton.lastLine) then
+        local questIndex = GetQuestIndexForWatch(linkButton.index);
+        if (questIndex) then
+           local title, level, questTag, suggestedGroup, isHeader, isCollapsed, isComplete, isDaily, questID = GetQuestLogTitle(questIndex);
+           if (questID and questID > 0) then
+              local questId = tostring(questID);
+              local questData = QTR_QuestData and QTR_QuestData[questId];
+              local titleLine = linkButton.lines[linkButton.startLine];
+
+              if (titleLine and titleLine.text) then
+                 if (QTR_PS["transtitle"] == "1" and questData and questData["Title"]) then
+                    QTR_ConfigureWatchFrameLineLayout(titleLine, true);
+                    QTR_UpdateWatchFrameQuestIcons(titleLine, questIndex, questID, true);
+                    local _, titleSize = titleLine.text:GetFont();
+                    titleLine:SetHeight(WATCHFRAME_LINEHEIGHT or titleLine:GetHeight());
+                    titleLine.text:SetHeight(0);
+                    QTR_SetShapedText(titleLine.text, QTR_GetTranslatedQuestTitleById(questId), QTR_Font1, titleSize or 13);
+                    local titleHeight = titleLine.text:GetHeight();
+                    if (titleHeight > (WATCHFRAME_LINEHEIGHT or 16)) then
+                       local titleLineHeight = WATCHFRAME_MULTIPLE_LINEHEIGHT or titleLine:GetHeight();
+                       if (titleHeight > titleLineHeight) then
+                          titleLineHeight = titleHeight;
+                       end
+                       titleLine:SetHeight(titleLineHeight);
+                       titleLine.text:SetHeight(titleLineHeight);
+                    end
+                 else
+                    QTR_ConfigureWatchFrameLineLayout(titleLine, false);
+                    QTR_UpdateWatchFrameQuestIcons(titleLine, questIndex, questID, false);
+                 end
+              end
+
+              if (questData and questData["Objectives"] and questData["Objectives"] ~= "" and linkButton.lastLine == linkButton.startLine + 1) then
+                 local objectiveLine = linkButton.lines[linkButton.startLine + 1];
+                 if (objectiveLine and objectiveLine.text) then
+                    local objectiveText = objectiveLine.text:GetText() or "";
+                    if (objectiveText ~= "" and not string.find(objectiveText, "%d+%s*/%s*%d+")) then
+                       QTR_ConfigureWatchFrameLineLayout(objectiveLine, true);
+                       local _, objectiveSize = objectiveLine.text:GetFont();
+                       objectiveLine:SetHeight(WATCHFRAME_LINEHEIGHT or objectiveLine:GetHeight());
+                       objectiveLine.text:SetHeight(0);
+                       QTR_SetShapedText(objectiveLine.text, QTR_ExpandUnitInfo(questData["Objectives"]), QTR_Font2, objectiveSize or 12, QTR_WatchFrameObjectiveLimit);
+                       local objectiveHeight = objectiveLine.text:GetHeight();
+                       if (objectiveHeight > (WATCHFRAME_LINEHEIGHT or 16)) then
+                          local objectiveLineHeight = WATCHFRAME_MULTIPLE_LINEHEIGHT or objectiveLine:GetHeight();
+                          if (objectiveHeight > objectiveLineHeight) then
+                             objectiveLineHeight = objectiveHeight;
+                          end
+                          objectiveLine:SetHeight(objectiveLineHeight);
+                          objectiveLine.text:SetHeight(objectiveLineHeight);
+                       end
+                    else
+                       QTR_ConfigureWatchFrameLineLayout(objectiveLine, false);
+                    end
+                 end
+              end
+           end
+        end
+     end
+  end
+end
+
+
+local function QTR_RefreshWatchFrame()
+  if (type(WatchFrame_Update) ~= "function" or not WatchFrame) then
+     return;
+  end
+
+  WatchFrame_Update(WatchFrame);
 end
 
 
@@ -981,266 +1329,254 @@ function QTR_BlizzardOptions()
   QTROptions.name = "Arabic WoW-Quests";
   InterfaceOptions_AddCategory(QTROptions);
 
+  local QTR_OptionsTextWidth = 360;
+  local QTR_OptionsHeaderWidth = 420;
+  local QTR_OptionsTextRight = -40;
+  local QTR_OptionsCheckRight = QTR_OptionsTextRight + 12;
+
+  local function QTR_SetOptionsCheckButtonText(checkButton, textRegion, text)
+     textRegion:SetFont(QTR_Font2, 13);
+     textRegion:ClearAllPoints();
+     textRegion:SetPoint("RIGHT", checkButton, "LEFT", -8, 0);
+     textRegion:SetWidth(QTR_OptionsTextWidth);
+     textRegion:SetJustifyH("RIGHT");
+     textRegion:SetText(text);
+  end
+
+  local function QTR_SetOptionsText(fontString, text, relativeTo, relativeIsCheckButton, yOffset, fontObject)
+     fontString:SetFontObject(fontObject or GameFontNormal);
+     fontString:SetJustifyH("RIGHT");
+     fontString:SetJustifyV("TOP");
+     fontString:ClearAllPoints();
+     fontString:SetWidth(QTR_OptionsTextWidth);
+     if (relativeIsCheckButton) then
+        fontString:SetPoint("TOPRIGHT", relativeTo, "BOTTOMRIGHT", QTR_OptionsTextRight - QTR_OptionsCheckRight, yOffset);
+     else
+        fontString:SetPoint("TOPRIGHT", relativeTo, "BOTTOMRIGHT", 0, yOffset);
+     end
+     fontString:SetFont(QTR_Font2, 13);
+     fontString:SetText(text);
+  end
+
+  local function QTR_SetOptionsCheckButtonPoint(checkButton, relativeTo, relativeIsCheckButton, yOffset)
+     checkButton:ClearAllPoints();
+     if (relativeIsCheckButton) then
+        checkButton:SetPoint("TOPRIGHT", relativeTo, "BOTTOMRIGHT", 0, yOffset);
+     else
+        checkButton:SetPoint("TOPRIGHT", relativeTo, "BOTTOMRIGHT", QTR_OptionsCheckRight - QTR_OptionsTextRight, yOffset);
+     end
+  end
+
   local QTROptionsHeader = QTROptions:CreateFontString(nil, "ARTWORK");
   QTROptionsHeader:SetFontObject(GameFontNormalLarge);
-  QTROptionsHeader:SetJustifyH("LEFT"); 
+  QTROptionsHeader:SetJustifyH("RIGHT"); 
   QTROptionsHeader:SetJustifyV("TOP");
   QTROptionsHeader:ClearAllPoints();
-  QTROptionsHeader:SetPoint("TOPLEFT", 16, -16);
+  QTROptionsHeader:SetWidth(QTR_OptionsHeaderWidth);
+  QTROptionsHeader:SetPoint("TOPRIGHT", QTROptions, "TOPRIGHT", QTR_OptionsTextRight, -16);
   QTROptionsHeader:SetText("Arabic WoW-Quests, ver. "..QTR_version.." ("..QTR_base..")");
 
+   local QTROptionsModeInfo = QTROptions:CreateFontString(nil, "ARTWORK");
+   QTR_SetOptionsText(QTROptionsModeInfo, QTR_ReverseText("تعرض الترجمة الآن مباشرة داخل النوافذ الأصلية فقط"), QTROptionsHeader, false, -18, GameFontWhite);
+
   local QTRCheckButton0 = CreateFrame("CheckButton", "QTRCheckButton0", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButton0:SetPoint("TOPLEFT", QTROptionsHeader, "BOTTOMLEFT", 0, -10);
-  QTRCheckButton0:SetScript("OnClick", function(self) if (QTR_PS["active"]=="1") then QTR_PS["active"]="0" else QTR_PS["active"]="1" end; end);
-  QTRCheckButton0Text:SetFont(QTR_Font2, 13);
-   QTRCheckButton0Text:SetText(QTR_ReverseText(QTR_Interface.active));
-
-  local QTROptionsMode0 = QTROptions:CreateFontString(nil, "ARTWORK");
-  QTROptionsMode0:SetFontObject(GameFontWhite);
-  QTROptionsMode0:SetJustifyH("LEFT");
-  QTROptionsMode0:SetJustifyV("TOP");
-  QTROptionsMode0:ClearAllPoints();
-  QTROptionsMode0:SetPoint("TOPLEFT", QTRCheckButton0, "BOTTOMLEFT", 20, -5);
-  QTROptionsMode0:SetFont(QTR_Font2, 13);
-   QTROptionsMode0:SetText(QTR_ReverseText(QTR_Interface.mode));
-
-  local QTRCheckButton1 = CreateFrame("CheckButton", "QTRCheckButton1", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButton1:SetPoint("TOPLEFT", QTROptionsMode0, "BOTTOMLEFT", 0, -5);
-  QTRCheckButton1:SetScript("OnClick", function(self) if (QTR_PS["mode"]=="2") then QTR_PS["mode"]="1" else QTR_PS["mode"]="2" end; QTRCheckButton2:SetChecked(QTR_PS["mode"]=="2"); end);
-  QTRCheckButton1Text:SetFont(QTR_Font2, 13);
-   QTRCheckButton1Text:SetText(QTR_ReverseText(QTR_Interface2.mode1a));
-
-  local QTROptionsText1b = QTROptions:CreateFontString(nil, "ARTWORK");
-  QTROptionsText1b:SetFontObject(GameFontNormal);
-  QTROptionsText1b:SetJustifyH("LEFT");
-  QTROptionsText1b:SetJustifyV("TOP");
-  QTROptionsText1b:ClearAllPoints();
-  QTROptionsText1b:SetPoint("TOPLEFT", QTRCheckButton1, "BOTTOMLEFT", 30, 5);
-  QTROptionsText1b:SetFont(QTR_Font2, 13);
-   QTROptionsText1b:SetText(QTR_ReverseText(QTR_Interface2.mode1b));
-
-  local QTROptionsMode1 = QTROptions:CreateFontString(nil, "ARTWORK");
-  QTROptionsMode1:SetFontObject(GameFontWhite);
-  QTROptionsMode1:SetJustifyH("LEFT");
-  QTROptionsMode1:SetJustifyV("TOP");
-  QTROptionsMode1:ClearAllPoints();
-  QTROptionsMode1:SetPoint("TOPLEFT", QTROptionsText1b, "BOTTOMLEFT", 0, -10);
-  QTROptionsMode1:SetFont(QTR_Font2, 13);
-   QTROptionsMode1:SetText(QTR_ReverseText(QTR_Interface.options1));
+   QTR_SetOptionsCheckButtonPoint(QTRCheckButton0, QTROptionsModeInfo, false, -10);
+   QTRCheckButton0:SetScript("OnClick", function(self) if (QTR_PS["active"]=="1") then QTR_PS["active"]="0" else QTR_PS["active"]="1" end; QTR_UpdateQuestLogToggleButtonText(); QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); end);
+  QTR_SetOptionsCheckButtonText(QTRCheckButton0, QTRCheckButton0Text, QTR_ReverseText(QTR_Interface.active));
   
   local QTRCheckButton3 = CreateFrame("CheckButton", "QTRCheckButton3", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButton3:SetPoint("TOPLEFT", QTROptionsMode1, "BOTTOMLEFT", 0, 0);
-  QTRCheckButton3:SetScript("OnClick", function(self) if (QTR_PS["transtitle"]=="0") then QTR_PS["transtitle"]="1" else QTR_PS["transtitle"]="0" end; end);
-  QTRCheckButton3Text:SetFont(QTR_Font2, 13);
-   QTRCheckButton3Text:SetText(QTR_ReverseText(QTR_Interface.transtitle));
-
-  local QTRCheckButton2 = CreateFrame("CheckButton", "QTRCheckButton2", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButton2:SetPoint("TOPLEFT", QTRCheckButton3, "BOTTOMLEFT", -30, -5);
-  QTRCheckButton2:SetScript("OnClick", function(self) if (QTR_PS["mode"]=="1") then QTR_PS["mode"]="2" else QTR_PS["mode"]="1" end; QTRCheckButton1:SetChecked(QTR_PS["mode"]=="1"); end);
-  QTRCheckButton2Text:SetFont(QTR_Font2, 13);
-   QTRCheckButton2Text:SetText(QTR_ReverseText(QTR_Interface2.mode2a));
-
-  local QTROptionsText2b = QTROptions:CreateFontString(nil, "ARTWORK");
-  QTROptionsText2b:SetFontObject(GameFontNormal);
-  QTROptionsText2b:SetJustifyH("LEFT");
-  QTROptionsText2b:SetJustifyV("TOP");
-  QTROptionsText2b:ClearAllPoints();
-  QTROptionsText2b:SetPoint("TOPLEFT", QTRCheckButton2, "BOTTOMLEFT", 30, 5);
-  QTROptionsText2b:SetFont(QTR_Font2, 13);
-   QTROptionsText2b:SetText(QTR_ReverseText(QTR_Interface2.mode2b));
-
-  local QTROptionsMode2 = QTROptions:CreateFontString(nil, "ARTWORK");
-  QTROptionsMode2:SetFontObject(GameFontWhite);
-  QTROptionsMode2:SetJustifyH("LEFT");
-  QTROptionsMode2:SetJustifyV("TOP");
-  QTROptionsMode2:ClearAllPoints();
-  QTROptionsMode2:SetPoint("TOPLEFT", QTROptionsText2b, "BOTTOMLEFT", 0, -10);
-  QTROptionsMode2:SetFont(QTR_Font2, 13);
-   QTROptionsMode2:SetText(QTR_ReverseText(QTR_Interface.options2));
-  
-  local QTRCheckButton4 = CreateFrame("CheckButton", "QTRCheckButton4", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButton4:SetPoint("TOPLEFT", QTROptionsMode2, "BOTTOMLEFT", 0, 0);
-  QTRCheckButton4:SetScript("OnClick", function(self) QTR_ChangeFrameHeight(); QTRCheckButton5:SetChecked(QTR_PS["size"]=="2"); end);
-  QTRCheckButton4Text:SetFont(QTR_Font2, 13);
-   QTRCheckButton4Text:SetText(QTR_ReverseText(QTR_Interface.height1));
-  
-  local QTRCheckButton5 = CreateFrame("CheckButton", "QTRCheckButton5", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButton5:SetPoint("TOPLEFT", QTRCheckButton4, "BOTTOMLEFT", 0, 8);
-  QTRCheckButton5:SetScript("OnClick", function(self) QTR_ChangeFrameHeight(); QTRCheckButton4:SetChecked(QTR_PS["size"]=="1"); end);
-  QTRCheckButton5Text:SetFont(QTR_Font2, 13);
-   QTRCheckButton5Text:SetText(QTR_ReverseText(QTR_Interface.height2));
-  
-  local QTRCheckButton6 = CreateFrame("CheckButton", "QTRCheckButton6", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButton6:SetPoint("TOPLEFT", QTRCheckButton5, "BOTTOMLEFT", 0, 0);
-  QTRCheckButton6:SetScript("OnClick", function(self) QTR_ChangeFrameWidth(); QTRCheckButton7:SetChecked(QTR_PS["width"]=="2"); end);
-  QTRCheckButton6Text:SetFont(QTR_Font2, 13);
-   QTRCheckButton6Text:SetText(QTR_ReverseText(QTR_Interface.width1));
-  
-  local QTRCheckButton7 = CreateFrame("CheckButton", "QTRCheckButton7", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButton7:SetPoint("TOPLEFT", QTRCheckButton6, "BOTTOMLEFT", 0, 8);
-  QTRCheckButton7:SetScript("OnClick", function(self) QTR_ChangeFrameWidth(); QTRCheckButton6:SetChecked(QTR_PS["width"]=="1"); end);
-  QTRCheckButton7Text:SetFont(QTR_Font2, 13);
-   QTRCheckButton7Text:SetText(QTR_ReverseText(QTR_Interface.width2));
+   QTR_SetOptionsCheckButtonPoint(QTRCheckButton3, QTRCheckButton0, true, -10);
+   QTRCheckButton3:SetScript("OnClick", function(self) if (QTR_PS["transtitle"]=="0") then QTR_PS["transtitle"]="1" else QTR_PS["transtitle"]="0" end; QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); end);
+  QTR_SetOptionsCheckButtonText(QTRCheckButton3, QTRCheckButton3Text, QTR_ReverseText(QTR_Interface.transtitle));
   
   local QTRCheckButtonGossip = CreateFrame("CheckButton", "QTRCheckButtonGossip", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButtonGossip:SetPoint("TOPLEFT", QTRCheckButton7, "BOTTOMLEFT", -50, -10);
+   QTR_SetOptionsCheckButtonPoint(QTRCheckButtonGossip, QTRCheckButton3, true, -10);
   QTRCheckButtonGossip:SetScript("OnClick", function(self) if (QTR_PS["gossip"]=="1") then QTR_PS["gossip"]="0" else QTR_PS["gossip"]="1" end; end);
-  QTRCheckButtonGossipText:SetFont(QTR_Font2, 13);
-   QTRCheckButtonGossipText:SetText(QTR_ReverseText("اعرض ترجمات نصوص الحوار"));
+  QTR_SetOptionsCheckButtonText(QTRCheckButtonGossip, QTRCheckButtonGossipText, QTR_ReverseText("اعرض ترجمات نصوص الحوار"));
   
   local QTRCheckButtonTutorial = CreateFrame("CheckButton", "QTRCheckButtonTutorial", QTROptions, "OptionsCheckButtonTemplate");
-  QTRCheckButtonTutorial:SetPoint("TOPLEFT", QTRCheckButtonGossip, "BOTTOMLEFT", 0, -5);
+  QTR_SetOptionsCheckButtonPoint(QTRCheckButtonTutorial, QTRCheckButtonGossip, true, -5);
   QTRCheckButtonTutorial:SetScript("OnClick", function(self) if (QTR_PS["tutorial"]=="1") then QTR_PS["tutorial"]="0" else QTR_PS["tutorial"]="1" end; end);
-  QTRCheckButtonTutorialText:SetFont(QTR_Font2, 13);
-   QTRCheckButtonTutorialText:SetText(QTR_ReverseText("اعرض ترجمات النصوص التعليمية")); 
+  QTR_SetOptionsCheckButtonText(QTRCheckButtonTutorial, QTRCheckButtonTutorialText, QTR_ReverseText("اعرض ترجمات النصوص التعليمية")); 
 
   
   local QTRWWW1 = QTROptions:CreateFontString(nil, "ARTWORK");
   QTRWWW1:SetFontObject(GameFontWhite);
-  QTRWWW1:SetJustifyH("LEFT");
+  QTRWWW1:SetJustifyH("RIGHT");
   QTRWWW1:SetJustifyV("TOP");
   QTRWWW1:ClearAllPoints();
-  QTRWWW1:SetPoint("BOTTOMLEFT", 16, 16);
+  QTRWWW1:SetWidth(200);
+  QTRWWW1:SetPoint("BOTTOMRIGHT", QTROptions, "BOTTOMRIGHT", -16, 16);
   QTRWWW1:SetFont(QTR_Font2, 13);
    QTRWWW1:SetText(QTR_ReverseText("زيارة موقع الإضافة:"));
   
   local QTRWWW2 = CreateFrame("EditBox", "QTRWWW2", QTROptions, "InputBoxTemplate");
   QTRWWW2:ClearAllPoints();
-  QTRWWW2:SetPoint("TOPLEFT", QTRWWW1, "TOPRIGHT", 10, 4);
+  QTRWWW2:SetPoint("TOPRIGHT", QTRWWW1, "TOPLEFT", -10, 4);
   QTRWWW2:SetHeight(20);
   QTRWWW2:SetWidth(170);
   QTRWWW2:SetAutoFocus(false);
   QTRWWW2:SetFontObject(GameFontGreen);
-  QTRWWW2:SetText("https://wowpopolsku.pl");
+  QTRWWW2:SetText("https://github.com/3majed");
   QTRWWW2:SetCursorPosition(0);
   QTRWWW2:SetScript("OnEnter", function(self)
 	  GameTooltip:SetOwner(self, "ANCHOR_TOPRIGHT")
       getglobal("GameTooltipTextLeft1"):SetFont(QTR_Font2, 13);
-	  GameTooltip:SetText(QTR_ReverseText("اضغط ثم استخدم اختصار النسخ لنسخ الرابط إلى الحافظة"), nil, nil, nil, nil, true)
+	  GameTooltip:SetText(QTR_ReverseText("اضغط ثم استخدم Ctrl+C لنسخ الرابط إلى الحافظة"), nil, nil, nil, nil, true)
 	  GameTooltip:Show() --Show the tooltip
      end);
   QTRWWW2:SetScript("OnLeave", function(self)
       getglobal("GameTooltipTextLeft1"):SetFont(Original_Font2, 13);
 	  GameTooltip:Hide() --Hide the tooltip
      end);
-  QTRWWW2:SetScript("OnTextChanged", function(self) QTRWWW2:SetText("https://wowpopolsku.pl"); end);
+  QTRWWW2:SetScript("OnTextChanged", function(self) QTRWWW2:SetText("https://github.com/3majed"); end);
 end
 
 
--- Initialize the quest log side panel, buttons, and quest log hooks.
-function QTR_OnLoad1()
-  QTR.frame1 = CreateFrame("Frame");
-  QTR.frame1:RegisterEvent("ADDON_LOADED");
-  QTR.frame1:RegisterEvent("QUEST_LOG_UPDATE");
-  QTR.frame1:SetScript("OnEvent", function(self, event, ...) return QTR[event] and QTR[event](QTR, event, ...) end);
-  QuestLogDetailScrollFrame:SetScript("OnShow", QTR_ShowAndUpdateQuestInfo);
-  QuestLogDetailScrollFrame:SetScript("OnHide", QTR_HideQuestInfo);
+local QTR_RuntimeInitialized = false;
+local QTR_EventFrame = CreateFrame("Frame");
 
-  QTR_QuestTitle:SetFont(QTR_Font2, 17);
-  QTR_QuestDetail:SetFont(QTR_Font2, 14);
-  QTRFrame1:ClearAllPoints();
-  QTRFrame1:SetPoint("TOPLEFT", QuestLogFrame, "TOPRIGHT", -3, -12);
 
-  -- small button in QuestLogFrame
-  QTR_ToggleButton1 = CreateFrame("Button",nil, QuestLogFrame, "UIPanelButtonTemplate");
-  QTR_ToggleButton1:SetWidth(35);
-  QTR_ToggleButton1:SetHeight(18);
-  QTR_ToggleButton1:SetText("QTR");
-  QTR_ToggleButton1:Show();
-  QTR_ToggleButton1:ClearAllPoints();
-  QTR_ToggleButton1:SetPoint("TOPLEFT", QuestLogFrame, "TOPLEFT", 620, -15);
-  QTR_ToggleButton1:SetScript("OnClick", QTR_ToggleVisibility);
+local function QTR_InitializeRuntime()
+  if (QTR_RuntimeInitialized) then
+     return true;
+  end
 
-  -- button for ChangeFrameHeight
-  QTR_ToggleButton2 = CreateFrame("Button",nil, QTRFrame1, "UIPanelButtonTemplate");
-  QTR_ToggleButton2:SetWidth(15);
-  QTR_ToggleButton2:SetHeight(22);
-  QTR_ToggleButton2:SetText("v");
-  QTR_ToggleButton2:Show();
-  QTR_ToggleButton2:ClearAllPoints();
-  QTR_ToggleButton2:SetPoint("BOTTOMLEFT", QTRFrame1, "BOTTOMRIGHT", -40, 9);
-  QTR_ToggleButton2:SetScript("OnClick", QTR_ChangeFrameHeight);
+  QTR_RuntimeInitialized = true;
 
-  -- button for ChangeFrameWidth
-  QTR_ToggleButton3 = CreateFrame("Button",nil, QTRFrame1, "UIPanelButtonTemplate");
-  QTR_ToggleButton3:SetWidth(15);
-  QTR_ToggleButton3:SetHeight(22);
-  QTR_ToggleButton3:SetText(">");
-  QTR_ToggleButton3:Show();
-  QTR_ToggleButton3:ClearAllPoints();
-  QTR_ToggleButton3:SetPoint("BOTTOMLEFT", QTRFrame1, "BOTTOMRIGHT", -25, 9);
-  QTR_ToggleButton3:SetScript("OnClick", QTR_ChangeFrameWidth);
+  if (QuestLogDetailScrollFrame and QuestLogDetailScrollFrame.HookScript) then
+     QuestLogDetailScrollFrame:HookScript("OnShow", QTR_ShowAndUpdateQuestInfo);
+     QuestLogDetailScrollFrame:HookScript("OnHide", QTR_HideQuestInfo);
+  end
 
-  hooksecurefunc("QuestLogTitleButton_OnClick", function() QTR_UpdateQuestInfo() end);
-   hooksecurefunc("QuestLog_Update", QTR_UpdateQuestLogTitleButtons);
-  
-   -- button with no HASH gossip in QuestMapDetailsScrollFrame
-   QTR_ToggleButtonGS = CreateFrame("Button",nil, GossipFrame, "UIPanelButtonTemplate");
-   QTR_ToggleButtonGS:SetWidth(230);
-   QTR_ToggleButtonGS:SetHeight(20);
-   QTR_ToggleButtonGS:SetText("Gossip-Hash=?");
-   QTR_ToggleButtonGS:Show();
-   QTR_ToggleButtonGS:ClearAllPoints();
-   QTR_ToggleButtonGS:SetPoint("TOPLEFT", GossipFrame, "TOPLEFT", 70, -50);
-   QTR_ToggleButtonGS:SetScript("OnClick", GS_ON_OFF);
+  if (QuestLogFrame) then
+     QTR_ToggleButton1 = CreateFrame("Button", nil, QuestLogFrame, "UIPanelButtonTemplate");
+     QTR_ToggleButton1:SetWidth(35);
+     QTR_ToggleButton1:SetHeight(18);
+     QTR_ToggleButton1:SetText("AR");
+     QTR_ToggleButton1:Show();
+     QTR_ToggleButton1:ClearAllPoints();
+     QTR_ToggleButton1:SetPoint("TOPLEFT", QuestLogFrame, "TOPLEFT", 620, -15);
+     QTR_ToggleButton1:SetScript("OnClick", QTR_ToggleVisibility);
+     QTR_UpdateQuestLogToggleButtonText();
+  end
 
-   -- button with HASH gossip in QuestFrame greeting view
-   QTR_ToggleButtonQG = CreateFrame("Button",nil, QuestFrame, "UIPanelButtonTemplate");
-   QTR_ToggleButtonQG:SetWidth(230);
-   QTR_ToggleButtonQG:SetHeight(20);
-   QTR_ToggleButtonQG:SetText("Gossip-Hash=?");
-   QTR_ToggleButtonQG:ClearAllPoints();
-   QTR_ToggleButtonQG:SetPoint("TOPLEFT", QuestFrame, "TOPLEFT", 95, -32);
-   QTR_ToggleButtonQG:SetScript("OnClick", GS_ON_OFF_QUEST);
-   QTR_ToggleButtonQG:Disable();
-   QTR_ToggleButtonQG:Hide();
+  if (type(QuestLogTitleButton_OnClick) == "function") then
+     hooksecurefunc("QuestLogTitleButton_OnClick", function() QTR_UpdateQuestInfo() end);
+  end
+  if (type(QuestLog_Update) == "function") then
+     hooksecurefunc("QuestLog_Update", QTR_UpdateQuestLogTitleButtons);
+  end
+
+  if (GossipFrame) then
+     QTR_ToggleButtonGS = CreateFrame("Button", nil, GossipFrame, "UIPanelButtonTemplate");
+     QTR_ToggleButtonGS:SetWidth(230);
+     QTR_ToggleButtonGS:SetHeight(20);
+     QTR_ToggleButtonGS:SetText("Gossip-Hash=?");
+     QTR_ToggleButtonGS:Show();
+     QTR_ToggleButtonGS:ClearAllPoints();
+     QTR_ToggleButtonGS:SetPoint("TOPLEFT", GossipFrame, "TOPLEFT", 70, -50);
+     QTR_ToggleButtonGS:SetScript("OnClick", GS_ON_OFF);
+  end
+
+  if (QuestFrame) then
+     QTR_ToggleButtonQG = CreateFrame("Button", nil, QuestFrame, "UIPanelButtonTemplate");
+     QTR_ToggleButtonQG:SetWidth(230);
+     QTR_ToggleButtonQG:SetHeight(20);
+     QTR_ToggleButtonQG:SetText("Gossip-Hash=?");
+     QTR_ToggleButtonQG:ClearAllPoints();
+     QTR_ToggleButtonQG:SetPoint("TOPLEFT", QuestFrame, "TOPLEFT", 95, -32);
+     QTR_ToggleButtonQG:SetScript("OnClick", GS_ON_OFF_QUEST);
+     QTR_ToggleButtonQG:Disable();
+     QTR_ToggleButtonQG:Hide();
+  end
+
+  if (type(WorldMapQuestFrame_OnMouseUp) == "function") then
+     hooksecurefunc("WorldMapQuestFrame_OnMouseUp", function() QTR_WorldMapQuestFrameOnMouseUp() end);
+  end
+  if (type(WorldMapFrame_SelectQuestFrame) == "function") then
+     hooksecurefunc("WorldMapFrame_SelectQuestFrame", function() QTR_WorldMapQuestFrameOnMouseUp("WORLD_MAP_SelectQuestFrame") end);
+  end
+  if (type(WorldMapFrame_UpdateQuests) == "function") then
+     hooksecurefunc("WorldMapFrame_UpdateQuests", QTR_UpdateWorldMapQuestList);
+  end
+  if (type(WatchFrame_Update) == "function") then
+     hooksecurefunc("WatchFrame_Update", QTR_UpdateWatchFrame);
+  end
+  if (TutorialFrame) then
+     TutorialFrame:HookScript("OnShow", Tut_onTutorialShow);
+     TutorialFrameNextButton:HookScript("OnClick", Tut_onTutorialShow);
+     TutorialFramePrevButton:HookScript("OnClick", Tut_onTutorialShow);
+  end
+
+  QTR_EventFrame:RegisterEvent("QUEST_LOG_UPDATE");
+  QTR_EventFrame:RegisterEvent("QUEST_GREETING");
+  QTR_EventFrame:RegisterEvent("QUEST_DETAIL");
+  QTR_EventFrame:RegisterEvent("QUEST_PROGRESS");
+  QTR_EventFrame:RegisterEvent("QUEST_COMPLETE");
+  QTR_EventFrame:RegisterEvent("WORLD_MAP_UPDATE");
+  QTR_EventFrame:RegisterEvent("GOSSIP_SHOW");
+  return true;
 end
 
 
--- Initialize quest dialog, world map, gossip, and tutorial event hooks.
-function QTR_OnLoad2()
-  QTR.frame2 = CreateFrame("Frame");
-  QTR.frame2:RegisterEvent("QUEST_GREETING");
-  QTR.frame2:RegisterEvent("QUEST_DETAIL");
-  QTR.frame2:RegisterEvent("QUEST_PROGRESS");
-  QTR.frame2:RegisterEvent("QUEST_COMPLETE");
-  QTR.frame2:RegisterEvent("WORLD_MAP_UPDATE");
-  QTR.frame2:RegisterEvent("GOSSIP_SHOW");
-  QTR.frame2:SetScript("OnEvent", function(self, event, ...) return QTR[event] and QTR[event](QTR, event, ...) end);
-  QTR_QuestTitle2:SetFont(QTR_Font2, 17);
-  QTR_QuestDetail2:SetFont(QTR_Font2, 14);
-  QTR_QuestWarning2:SetFont(QTR_Font2, 12);
-  QTRFrame2:ClearAllPoints();
-  QTRFrame2:SetPoint("TOPLEFT", QuestFrame, "TOPRIGHT", -31, -19);
-  QuestFrame:SetScript("OnHide", QTR_Frame2Close);
-  hooksecurefunc("WorldMapQuestFrame_OnMouseUp", function() QTR_WorldMapQuestFrameOnMouseUp() end);
-  TutorialFrame:HookScript("OnShow", Tut_onTutorialShow);
-  TutorialFrameNextButton:HookScript("OnClick", Tut_onTutorialShow);
-  TutorialFramePrevButton:HookScript("OnClick", Tut_onTutorialShow);
-end
+QTR_EventFrame:RegisterEvent("ADDON_LOADED");
+QTR_EventFrame:SetScript("OnEvent", function(self, event, ...)
+  if (event == "ADDON_LOADED") then
+     local addon = ...;
+     if (addon ~= "ArWoW_Quests") then
+        return;
+     end
+
+     QTR_InitializeRuntime();
+     if (QTR.ADDON_LOADED) then
+        QTR:ADDON_LOADED(event, addon);
+     end
+     self:UnregisterEvent("ADDON_LOADED");
+     return;
+  end
+
+  if (QTR[event]) then
+     QTR[event](QTR, event, ...);
+  end
+end);
 
 
 -- Refresh translated world map quest text after the selected quest changes.
-function QTR_WorldMapQuestFrameOnMouseUp()
-  QTR_event = "WORLD_MAP_OnMouseUp";
+function QTR_WorldMapQuestFrameOnMouseUp(eventName)
+  eventName = eventName or "WORLD_MAP_OnMouseUp";
+  QTR_event = eventName;
   QTR_OnEvent2();
   if (not QTR_WorldMapRetryPending) then
      QTR_WorldMapRetryPending = true;
      if (not QTR_wait(0.2, function(eventName)
         QTR_WorldMapRetryPending = false;
-        if (WorldMapFrame and WorldMapFrame:IsVisible() and QTR_PS and QTR_PS["active"]=="1" and QTR_PS["mode"]=="1") then
+        if (WorldMapFrame and WorldMapFrame:IsVisible() and QTR_PS and QTR_PS["active"]=="1") then
            QTR_event = eventName;
            QTR_OnEvent2();
         end
-     end, "WORLD_MAP_OnMouseUp")) then
+     end, eventName)) then
         QTR_WorldMapRetryPending = false;
      end
   end
 end
 
 
+local function QTR_ClearSavedTranslationCaches()
+   QTR_SAVED = {};
+   QTR_GOSSIP = {};
+   QTR_AddLocalizedSystemMessage("|cffffff00ArWoW-Quests - ", "Cleared QTR_SAVED and QTR_GOSSIP. Use /reload to persist the change.");
+end
+
+
 -- Open the addon options panel from the registered slash commands.
 function QTR_SlashCommand(msg)
+   local command = string.lower(string.match(msg or "", "^%s*(.-)%s*$") or "");
+   if (command == "clear") then
+       QTR_ClearSavedTranslationCaches();
+       return;
+   end
+
   InterfaceOptionsFrame_OpenToCategory(QTROptions);
   RestoreOriginalFonts();
 end
@@ -1249,13 +1585,15 @@ end
 -- Finish addon startup once this addon has been loaded by the client.
 function QTR:ADDON_LOADED(_, addon)
    if (addon == "ArWoW_Quests") then
-     SlashCmdList["WOWPOPOLSKU_QUESTS"] = function(msg) QTR_SlashCommand(msg); end
-     SLASH_WOWPOPOLSKU_QUESTS1 = "/arwow-quests";
-     SLASH_WOWPOPOLSKU_QUESTS2 = "/qtr";
+       QTR_InitializeRuntime();
+     SlashCmdList["ArWoW_QUESTS"] = function(msg) QTR_SlashCommand(msg); end
+     SLASH_ArWoW_QUESTS1 = "/arwow-quests";
+     SLASH_ArWoW_QUESTS2 = "/qtr";
      QTR_CheckVars();
+       QTR_UpdateQuestLogToggleButtonText();
+          QTR_RefreshWatchFrame();
      QTR_BlizzardOptions();
        QTR_AddLocalizedSystemMessage("|cffffff00ArWoW-Quests ver. "..QTR_version.." - ", QTR_Messages.loaded);
-     self.frame1:UnregisterEvent("ADDON_LOADED");
      self.ADDON_LOADED = nil;
      QTR_Messages.itemchoose1 = Spr_Gender(QTR_Messages.itemchoose1);
      DetectEmuServer();
@@ -1263,10 +1601,11 @@ function QTR:ADDON_LOADED(_, addon)
 end
 
 
--- Refresh the quest log translation pane when the quest log changes.
+-- Refresh translated quest log details when the quest log changes.
 function QTR:QUEST_LOG_UPDATE()
-  if (QTRFrame1:IsVisible()) then
+   if (QTR_PS and QTR_PS["active"]=="1" and QuestLogFrame and QuestLogFrame:IsVisible()) then
      QTR_UpdateQuestInfo();
+       QTR_UpdateQuestLogTitleButtons();
   end
 end
 
@@ -1275,24 +1614,22 @@ end
 function QTR:WORLD_MAP_UPDATE()
   if ( WorldMapFrame:IsVisible() ) then
      if (QTR_PS["active"]=="1") then
-        if (QTR_PS["mode"]=="1") then
-           if ( WorldMapQuestShowObjectives:GetChecked() ) then
-              QTR_event = "WORLD_MAP_UPDATE";
-              QTR_OnEvent2();
-              if (not QTR_WorldMapRetryPending) then
-                 QTR_WorldMapRetryPending = true;
-                 if (not QTR_wait(0.2, function(eventName)
-                    QTR_WorldMapRetryPending = false;
-                    if (WorldMapFrame and WorldMapFrame:IsVisible() and WorldMapQuestShowObjectives and WorldMapQuestShowObjectives:GetChecked() and QTR_PS and QTR_PS["active"]=="1" and QTR_PS["mode"]=="1") then
-                       QTR_event = eventName;
-                       QTR_OnEvent2();
-                    end
-                 end, "WORLD_MAP_UPDATE")) then
-                    QTR_WorldMapRetryPending = false;
+        if ( WorldMapQuestShowObjectives:GetChecked() ) then
+           QTR_event = "WORLD_MAP_UPDATE";
+           QTR_OnEvent2();
+           if (not QTR_WorldMapRetryPending) then
+              QTR_WorldMapRetryPending = true;
+              if (not QTR_wait(0.2, function(eventName)
+                 QTR_WorldMapRetryPending = false;
+                 if (WorldMapFrame and WorldMapFrame:IsVisible() and WorldMapQuestShowObjectives and WorldMapQuestShowObjectives:GetChecked() and QTR_PS and QTR_PS["active"]=="1") then
+                    QTR_event = eventName;
+                    QTR_OnEvent2();
                  end
+              end, "WORLD_MAP_UPDATE")) then
+                 QTR_WorldMapRetryPending = false;
               end
            end
-	end
+        end
      end
   end
 end
@@ -1351,7 +1688,7 @@ local QTR_SetQuestGreetingHeaders;
 function QTR:QUEST_GREETING()
    QTR_EnsureQuestGreetingWidth();
 
-   if (QTR_PS["active"]=="1" and QTR_PS["mode"]=="1") then
+   if (QTR_PS["active"]=="1") then
       QTR_SetQuestGreetingHeaders(true);
    else
       QTR_SetQuestGreetingHeaders(false);
@@ -1421,14 +1758,17 @@ function QTR_OnEvent2()
       if ( not questFrame ) then
         break
       elseif ( WORLDMAP_SETTINGS.selectedQuest==questFrame ) then
-        q_title=questFrame.title:GetText();
+            q_title = questFrame.qtrOriginalTitle or questFrame.title:GetText();
+            if (questFrame.questId and questFrame.questId > 0) then
+                q_ID = questFrame.questId;
+            end
         break;
       end
     end
   end
 
   -- search in QuestLog
-  while GetQuestLogTitle(q_i) do
+   while (q_ID == 0 and GetQuestLogTitle(q_i)) do
     local questTitle, level, questTag, suggestedGroup, isHeader, isCollapsed, isComplete, isDaily, questID = GetQuestLogTitle(q_i)
     if ( not isHeader ) then
        if ( q_title == questTitle ) then
@@ -1440,12 +1780,6 @@ function QTR_OnEvent2()
   end
   RestoreOriginalFonts();
   if ( QTR_PS["active"]=="1" )then
-     QTR_QuestID2:SetText("");
-     QTR_SetShapedText(QTR_QuestTitle2, q_title, QTR_Font1, 17);
-     QTR_SetShapedText(QTR_QuestDetail2, QTR_Messages.missing, QTR_Font2, 14, QTR_FrameBodyLimit);
-     QTR_QuestWarning2:SetText("");
-     QTR_QuestWarning2:SetFont(QTR_Font2, 12);
-     QTR_QuestWarning2:SetJustifyH("LEFT");
      -- not exist in QuestLog ?
      if ( q_ID == 0 ) then
         if ( isGetQuestID=="1" and type(GetQuestID) == "function" ) then
@@ -1459,30 +1793,23 @@ function QTR_OnEvent2()
         if ( q_ID == 0 ) then
            if (QTR_QuestList[q_title]) then
               local q_lists=QTR_QuestList[q_title];
-              q_i=string.find(q_lists, ",");
               if ( string.find(q_lists, ",")==nil ) then
                  -- only 1 questID to this title
                  q_ID=tonumber(q_lists);
               else
                  -- multiple questIDs - get first, available (not completed) questID from QuestLists
                  local QTR_table=QTR_split(q_lists, ",");
-                 local QTR_multiple = "";
                  local QTR_Center="";
                  for ii,vv in ipairs(QTR_table) do
                     if (not QTR_PC[vv]) then
-                       if (QTR_Center=="") then
-                           QTR_Center=vv;
-                       else
-                           QTR_multiple = QTR_multiple .. ", " .. vv;
-                       end
+                       QTR_Center=vv;
+                       break;
+                    elseif (QTR_Center=="") then
+                       QTR_Center=vv;
                     end
                  end
                  if ( string.len(QTR_Center)>0 ) then
                     q_ID=tonumber(QTR_Center);
-                    if ( string.len(QTR_multiple)>0 ) then
-                       QTR_multiple = " (" .. string.sub(QTR_multiple, 3) .. ")";
-                       QTR_SetShapedText(QTR_QuestWarning2, QTR_Messages.multipleID .. QTR_multiple, QTR_Font2, 12);
-                    end
                  end
               end
            end
@@ -1490,17 +1817,10 @@ function QTR_OnEvent2()
      end
      if ( q_ID > 0 ) then
         local str_id = tostring(q_ID);
-        QTR_QuestID2:SetText("QuestID: " .. str_id);
-        QTR_SetShapedText(QTR_QuestTitle2, q_title, QTR_Font1, 17);
         if (QTR_QuestData[str_id]) then
-           -- display only, if translation exists
-	   if (QTR_PS["mode"]=="2") then
-              QTR_ShowFrame2(QTR_event, str_id);
-	   else
-              QTR_ChangeText_InEvent(QTR_event, str_id);
-           end
+           QTR_ChangeText_InEvent(QTR_event, str_id);
         else
-           -- DEFAULT_CHAT_FRAME:AddMessage("WoWpoPolsku-Quests - Qid: "..tostring(q_ID).." ("..QTR_Messages.missing..")");
+           -- DEFAULT_CHAT_FRAME:AddMessage("ArWoW_Quests - Qid: "..tostring(q_ID).." ("..QTR_Messages.missing..")");
            QTR_SAVED[str_id.." TITLE"]=GetTitleText();               -- save original title to future translation
            if (QTR_event=="QUEST_DETAIL") then
               QTR_SAVED[str_id.." DESCRIPTION"]=GetQuestText();      -- save original text to future translation
@@ -1512,7 +1832,6 @@ function QTR_OnEvent2()
            if (QTR_event=="QUEST_COMPLETE") then
               QTR_SAVED[str_id.." COMPLETE"]=GetRewardText();        -- save original text to future translation
            end
-           QTRFrame2:Hide();
         end
      end
   end
@@ -1522,56 +1841,6 @@ function QTR_OnEvent2()
         QTR_PC[str_id]="OK";
      end
   end
-end
-
-
--- Fill and show the separate translated quest dialog window.
-function QTR_ShowFrame2(eventStr, qid)
-  QTR_QuestID2:SetText("QuestID: " .. qid);
-  QTR_SetShapedText(QTR_QuestDetail2, QTR_Messages.missing, QTR_Font2, 14, QTR_FrameBodyLimit);
-  if (QTR_QuestData[qid]) then
-   QTR_SetShapedText(QTR_QuestTitle2, QTR_GetTranslatedQuestTitleById(qid), QTR_Font1, 17);
-     local QTR_text = "";
-     if (eventStr == "QUEST_DETAIL") then
-        if (QTR_QuestData[qid]["Description"]) then
-           QTR_text = QTR_ExpandUnitInfo(QTR_QuestData[qid]["Description"]);
-        end
-        local QTR_text2 = "";
-        if (QTR_QuestData[qid]["Objectives"]) then
-           QTR_text2 = QTR_ExpandUnitInfo(QTR_QuestData[qid]["Objectives"]);
-        end
-        QTR_text = QTR_text .. "\n\n" .. QTR_Messages.objectives .. "\n" .. QTR_text2;
-     end
-     if (eventStr == "QUEST_PROGRESS") then
-        if (QTR_QuestData[qid]["Progress"]) then
-           QTR_text = QTR_ExpandUnitInfo(QTR_QuestData[qid]["Progress"]);
-        end
-     end
-     if (eventStr == "QUEST_COMPLETE") then
-        if (QTR_QuestData[qid]["Completion"]) then
-           QTR_text = QTR_ExpandUnitInfo(QTR_QuestData[qid]["Completion"]);
-        end
-     end
-     QTR_SetShapedText(QTR_QuestDetail2, QTR_text, QTR_Font2, 14, QTR_FrameBodyLimit);
-     QTRFrame2:ClearAllPoints();
-     QTRFrame2:SetPoint("TOPLEFT", QuestFrame, "TOPRIGHT", -31, -19);
-     if ( QuestNPCModel ) then
-        if ( QuestNPCModel:IsVisible() ) then
-           QTRFrame2:SetPoint("TOPLEFT", QuestNPCModel, "TOPRIGHT", 0, 42);
-        end
-     end
-     QTRFrame2:Show();
-  end
-end
-
-
--- Hide the separate quest dialog window and run the default cleanup.
-function QTR_Frame2Close()
-  QTRFrame2:Hide();
-   if (QTR_ToggleButtonQG) then
-       QTR_ToggleButtonQG:Hide();
-   end
-  QuestFrame_OnHide();
 end
 
 
@@ -1592,88 +1861,6 @@ function QTR_split(str, c)
 end
 
 
--- Find the last occurrence of a character inside a string.
-function QTR_findlast(source, char)
-  if (not source) then
-     return 0;
-  end
-  local lastpos = 0;
-  local byte_char = string.byte(char);
-  for i=1, #source do
-     if (string.byte(source,i)==byte_char) then
-        lastpos = i;
-     end
-  end
-  return lastpos;
-end
-
-
--- Toggle the translation pane between compact and tall layouts.
-function QTR_ChangeFrameHeight()
-  -- normal height of Frame = 425, quest detail = 350
-  if (QTR_SizeH == 1) then
-     QTRFrame1:SetHeight(525);
-     QTR_QuestDetail:SetHeight(430);
-     QTR_ToggleButton2:SetText("^");
-     QTR_SizeH = 2;
-     QTR_PS["size"] = "2";
-  else
-     QTRFrame1:SetHeight(425);
-     QTR_QuestDetail:SetHeight(350);
-     QTR_ToggleButton2:SetText("v");
-     QTR_SizeH = 1;
-     QTR_PS["size"] = "1";
-  end
-end
-
-
--- Toggle the translation pane between narrow and wide layouts.
-function QTR_ChangeFrameWidth()
-  -- normal width of Frame = 350, quest detail = 320
-  if (QTR_SizeW == 1) then
-     QTRFrame1:SetWidth(525);
-     QTR_QuestDetail:SetWidth(495);
-     QTR_QuestTitle:SetWidth(495);
-     QTR_ToggleButton3:SetText("<");
-     QTR_SizeW = 2;
-     QTR_PS["width"] = "2";
-  else
-     QTRFrame1:SetWidth(350);
-     QTR_QuestDetail:SetWidth(320);
-     QTR_QuestTitle:SetWidth(320);
-     QTR_ToggleButton3:SetText(">");
-     QTR_SizeW = 1;
-     QTR_PS["width"] = "1";
-  end
-end
-
-
--- Start dragging the quest log translation pane.
-function QTR_OnMouseDown1()
-  -- start moving the window
-  QTRFrame1:StartMoving();
-end
-  
-
--- Stop dragging the quest log translation pane.
-function QTR_OnMouseUp1()
-  -- stop moving the window
-  QTRFrame1:StopMovingOrSizing();
-end
-
-
--- Start dragging the separate quest dialog pane.
-function QTR_OnMouseDown2()
-  -- start moving the window
-  QTRFrame2:StartMoving();
-end
-  
-
--- Stop dragging the separate quest dialog pane.
-function QTR_OnMouseUp2()
-  -- stop moving the window
-  QTRFrame2:StopMovingOrSizing();
-end
 
 
 -- Restore Blizzard quest fonts, headings, and reward labels.
@@ -1716,9 +1903,11 @@ function RestoreOriginalFonts()
    QuestProgressTitleText:SetJustifyH("LEFT");
   QuestProgressText:SetFont(Original_Font2, 13);
    QuestProgressText:SetJustifyH("LEFT");
+   QTR_ApplyRTLWidthAdjustment(QuestProgressText, false);
   QuestProgressRequiredItemsText:SetText(QTR_MessOrig.reqitems);
   QuestProgressRequiredItemsText:SetFont(Original_Font1, 18);
    QuestProgressRequiredItemsText:SetJustifyH("LEFT");
+   QTR_ApplyRTLWidthAdjustment(QuestProgressRequiredItemsText, false);
   QuestProgressRequiredMoneyText:SetText(QTR_MessOrig.reqmoney);
   QuestProgressRequiredMoneyText:SetFont(Original_Font2, 13);
    QuestProgressRequiredMoneyText:SetJustifyH("LEFT");
@@ -1787,6 +1976,7 @@ end
 local function QTR_SetGossipGreetingText(text, fontName, fontSize, justify)
    GossipGreetingText:SetText(text or "");
    GossipGreetingText:SetFont(fontName, fontSize);
+   QTR_ApplyRTLWidthAdjustment(GossipGreetingText, text and AS_ContainsArabic and AS_ContainsArabic(text), GossipGreetingText);
    GossipGreetingText:SetJustifyH(justify or "LEFT");
 end
 
@@ -1948,14 +2138,15 @@ function QTR_ToggleVisibility()
      QTR_HideQuestInfo();
     QTR_AddLocalizedSystemMessage("|cffffff00ArWoW-Quests ", QTR_Messages.isinactive);
      RestoreOriginalFonts();
-     if (QTR_PS["mode"]=="1") then
-        QTR_RestoreQuestLogEnglish();
-     end
+     QTR_RestoreQuestLogEnglish();
   end
+   QTR_UpdateQuestLogToggleButtonText();
+   QTR_RefreshWorldMapQuestList();
+   QTR_RefreshWatchFrame();
 end
 
 
--- Show the side pane if needed and refresh its selected quest content.
+-- Refresh translated quest details for the currently selected quest log entry.
 function QTR_ShowAndUpdateQuestInfo()
   if (not QTR_PS) then
      QTR_CheckVars();
@@ -1963,21 +2154,17 @@ function QTR_ShowAndUpdateQuestInfo()
   if (QTR_PS["active"]=="0") then
      return;
   end
-  if (QTR_PS["mode"]=="2") then
-     QTRFrame1:Show();
-  end;
   QTR_UpdateQuestInfo();
    QTR_UpdateQuestLogTitleButtons();
 end
 
 
--- Hide the quest log translation pane.
+-- No-op kept for the QuestLogDetailScrollFrame OnHide hook.
 function QTR_HideQuestInfo()
-  QTRFrame1:Hide();
 end
 
 
--- Load the selected quest into the side translation pane.
+-- Load the selected quest into the original quest log detail panel.
 function QTR_UpdateQuestInfo()
   if (QTR_PS["active"]=="0") then
      return;
@@ -1993,29 +2180,13 @@ function QTR_UpdateQuestInfo()
   end
 
   local qid = tostring(questID);
-  QTR_QuestID:SetText("QuestID: " .. qid);
 
   if (QTR_QuestData[qid]) then
      QTR_objectives  = QTR_ExpandUnitInfo(QTR_QuestData[qid]["Objectives"]);
      QTR_description = QTR_ExpandUnitInfo(QTR_QuestData[qid]["Description"]);
-     QTR_descripFull = QTR_Messages.details .. "\n" .. QTR_description;
-     QTR_translator = "";
-     if (QTR_QuestData[qid]["Translator"]) then
-        if (QTR_QuestData[qid]["Translator"]>"") then
-            QTR_translator = "\n\n" .. QTR_Messages.translator .. " " .. QTR_ExpandUnitInfo(QTR_QuestData[qid]["Translator"]);
-        end
-     end
-   QTR_SetShapedText(QTR_QuestTitle, QTR_GetTranslatedQuestTitleById(qid), QTR_Font1, 17);
-     QTR_SetShapedText(QTR_QuestDetail, QTR_objectives .. "\n\n" .. QTR_descripFull .. QTR_translator, QTR_Font2, 14, QTR_FrameBodyLimit);
-     if (QTR_PS["mode"]=="1") then		       -- translation direct into original QuestLog frame
-        QTR_ChangeText_OnQuestLog(qid);
-     end
+     QTR_ChangeText_OnQuestLog(qid);
   else
-     QTR_SetShapedText(QTR_QuestTitle, questTitle, QTR_Font1, 17);
-     QTR_SetShapedText(QTR_QuestDetail, QTR_Messages.missing, QTR_Font2, 14, QTR_FrameBodyLimit);
-     if (QTR_PS["mode"]=="1") then
-	RestoreOriginalFonts();
-     end;
+     RestoreOriginalFonts();
   end 
 end
 
@@ -2162,11 +2333,11 @@ function QTR_Gossip_Show()
             QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
             QTR_ToggleButtonGS:Disable();
          end
-         local numQuestButtons = GetNumGossipActiveQuests() + GetNumGossipAvailableQuests();
+         local maxGossipButtons = NUMGOSSIPBUTTONS or 32;
          local questButton;
-         for i = 1, numQuestButtons, 1 do
+         for i = 1, maxGossipButtons, 1 do
             questButton = getglobal("GossipTitleButton"..tostring(i));
-            if (questButton and questButton:GetText()) then
+            if (questButton and questButton:IsShown() and (questButton.type == "Available" or questButton.type == "Active") and questButton:GetText()) then
                local questText = questButton:GetText();
                local prefix = "";
                local suffix = "";
@@ -2187,14 +2358,13 @@ function QTR_Gossip_Show()
             end
          end
          if (GetNumGossipOptions()>0) then    -- there are still additional function buttons in gossip, that can be translated
-            local pozycja=numQuestButtons;
             local titleButton;
-            for i = 1, GetNumGossipOptions(), 1 do 
-               titleButton=getglobal("GossipTitleButton"..tostring(pozycja+i));
-               if (titleButton:GetText()) then
+            for i = 1, maxGossipButtons, 1 do 
+               titleButton=getglobal("GossipTitleButton"..tostring(i));
+               if (titleButton and titleButton:IsShown() and titleButton.type == "Gossip" and titleButton:GetText()) then
                   local gostxt = titleButton:GetText();
                   if (string.find(gostxt, "|cff000000") == nil) then   -- not a quest in gossip
-                     Hash = StringHash(gostxt);
+                     local Hash = StringHash(gostxt);
                      if ( GS_Gossip[Hash] ) then   -- translation of additional text exists
                         local optionWidth = QTR_GetGossipOptionWidth(titleButton);
                         local Gossip_AR = QTR_PrepareGossipDisplayText(GS_Gossip[Hash], optionWidth, 13);
@@ -2216,7 +2386,7 @@ end
 -- Schedule tutorial translation after the frame finishes its own refresh.
 function Tut_onTutorialShow()
    if (QTR_PS["tutorial"]=="1") then
-      if (not QTR_wait(0.1,Tut_TutorialShowDelayed)) then  -- delay 0.1 sec
+      if (not QTR_wait(0.01,Tut_TutorialShowDelayed)) then  -- delay 0.01 sec for near-instant rendering
       end
    end
 end
@@ -2231,20 +2401,108 @@ function Tut_TutorialShowDelayed()
       Tut_tekst = Tut_Data[tostring(Tut_ID)]["Text"];
    end    
    if (string.len(Tut_tekst)>0) then
-      TutorialFrameTitle:SetText(Tut_tytul);
       local _font1, _size1, _1 = TutorialFrameTitle:GetFont();
       TutorialFrameTitle:SetFont(QTR_Font2, _size1);
-      TutorialFrameText:SetText(Tut_tekst);
+      if (Tut_tytul and AS_ContainsArabic and AS_ContainsArabic(Tut_tytul)) then
+         Tut_tytul = string.gsub(Tut_tytul, "|n", "\n");
+         Tut_tytul = string.gsub(Tut_tytul, "\n", " ");
+         
+         -- Protect colors natively by injecting pre-reversed tags onto every word
+         Tut_tytul = string.gsub(Tut_tytul, "%|c(%x%x%x%x%x%x%x%x)(.-)%|r", function(hex, content)
+             local revHex = string.reverse(hex)
+             return string.gsub(content, "([^%s]+)", "r|%1" .. revHex .. "c|")
+         end)
+
+         Tut_tytul = QTR_ReverseText(Tut_tytul);
+
+         TutorialFrameTitle:SetJustifyH("RIGHT");
+      else
+         TutorialFrameTitle:SetJustifyH("LEFT");
+      end
+      TutorialFrameTitle:SetText(Tut_tytul);
+
       local _font2, _size2, _2 = TutorialFrameText:GetFont();
       TutorialFrameText:SetFont(QTR_Font2, _size2);  
+      if (Tut_tekst and AS_ContainsArabic and AS_ContainsArabic(Tut_tekst)) then
+         Tut_tekst = string.gsub(Tut_tekst, "|n", "\n");
+         
+         -- Protect colors natively by injecting pre-reversed tags onto every word.
+         -- This ensures AS_TestLine natively evaluates their exact 0-width and preserves them flawlessly across line wraps
+         Tut_tekst = string.gsub(Tut_tekst, "%|c(%x%x%x%x%x%x%x%x)(.-)%|r", function(hex, content)
+             local revHex = string.reverse(hex)
+             return string.gsub(content, "([^%s]+)", "r|%1" .. revHex .. "c|")
+         end)
+
+         -- Pre-reverse arbitrary English tokens so the reshaper flips them back to readable syntax automatically
+         Tut_tekst = string.gsub(Tut_tekst, "<([^>]+)>", function(content)
+             return ">" .. string.reverse(content) .. "<"
+         end)
+         Tut_tekst = string.gsub(Tut_tekst, "/([a-zA-Z]+)", function(content)
+             return string.reverse(content) .. "/"
+         end)
+
+         -- TutorialFrameText:GetWidth() is often wildly uninitialized (e.g., 10 or 1024) across the very first frame render,
+         -- which destroys the width constraint logic. We clamp it strictly to its intended static pixel width.
+         local w = TutorialFrameText:GetWidth();
+         if not w or w < 200 or w > 300 then w = 272; end
+         
+         local shapedText = ""
+         for paragraph in string.gmatch(Tut_tekst .. "\n", "(.-)\n") do
+            if paragraph ~= "" then
+                local shapedPara = AS_ReverseAndPrepareLineText(paragraph, w, _size2)
+                if shapedText == "" then
+                    shapedText = shapedPara
+                else
+                    shapedText = shapedText .. "\n" .. shapedPara
+                end
+            else
+                if shapedText ~= "" then
+                    shapedText = shapedText .. "\n"
+                end
+            end
+         end
+         Tut_tekst = shapedText
+
+         TutorialFrameText:SetJustifyH("RIGHT");
+      else
+         TutorialFrameText:SetJustifyH("LEFT");
+      end
+      TutorialFrameText:SetText(Tut_tekst);
    end
-   TutorialFrameOkayButton:SetText("Zamknij");
+   
+   local okayTextFont = TutorialFrameOkayButton:GetFontString();
+   if okayTextFont then
+       local _font3, _size3 = okayTextFont:GetFont();
+       okayTextFont:SetFont(QTR_Font2, _size3 or 12);
+   end
+   TutorialFrameOkayButton:SetText(QTR_ReverseText("\216\165\216\186\217\132\216\167\217\130"));
 end
 
 
 -- Expand quest placeholders for names, gender, class, and race tokens.
 function QTR_ExpandUnitInfo(msg)
+   if (not msg or msg == "") then
+      return msg or "";
+   end
+
+   msg = string.gsub(msg, "%$[bB]", "\n");
+   msg = string.gsub(msg, "%$[nN]", "{N}");
+   msg = string.gsub(msg, "%$[cC]", "{C}");
+   msg = string.gsub(msg, "%$[rR]", "{R}");
+
+   msg = string.gsub(msg, "{B}", "\n");
    msg = string.gsub(msg, "NEW_LINE", "\n");
+
+   msg = string.gsub(msg, "{[cC]}", "{C}");
+   msg = string.gsub(msg, "{[rR]}", "{R}");
+
+   msg = string.gsub(msg, "{002DFFFFc}", "{cFFFFD200}");
+   msg = string.gsub(msg, "{FFFF00FFc}", "{cFF00FFFF}");
+   msg = string.gsub(msg, "{0000FFFFc}", "{cFFFF0000}");
+   msg = string.gsub(msg, "{ffffffffc}", "{cffffffff}");
+   msg = string.gsub(msg, "EU_ROLOC:", "UE_COLOR:");
+
+   msg = string.gsub(msg, "{N}", AS_UTF8reverse(QTR_name));
    msg = string.gsub(msg, "YOUR_NAME0", AS_UTF8reverse(string.upper(QTR_name)));
    msg = string.gsub(msg, "YOUR_NAME1", AS_UTF8reverse(QTR_name));
    msg = string.gsub(msg, "YOUR_NAME2", AS_UTF8reverse(QTR_name));
@@ -2255,102 +2513,16 @@ function QTR_ExpandUnitInfo(msg)
    msg = string.gsub(msg, "YOUR_NAME7", AS_UTF8reverse(QTR_name));
    msg = string.gsub(msg, "YOUR_NAME", AS_UTF8reverse(QTR_name));
    
--- still handle YOUR_GENDER(x;y)
-   local nr_1, nr_2, nr_3 = 0;
-   local QTR_forma = "";
-   local nr_poz = string.find(msg, "YOUR_GENDER");    -- when not found, it's: nil
-   while (nr_poz and nr_poz>0) do
-      nr_1 = nr_poz + 1;   
-      while (string.sub(msg, nr_1, nr_1) ~= "(") do
-         nr_1 = nr_1 + 1;
-      end
-      if (string.sub(msg, nr_1, nr_1) == "(") then
-         nr_2 =  nr_1 + 1;
-         while (string.sub(msg, nr_2, nr_2) ~= ";") do
-            nr_2 = nr_2 + 1;
-         end
-         if (string.sub(msg, nr_2, nr_2) == ";") then
-            nr_3 = nr_2 + 1;
-            while (string.sub(msg, nr_3, nr_3) ~= ")") do
-               nr_3 = nr_3 + 1;
-            end
-            if (string.sub(msg, nr_3, nr_3) == ")") then
-               if (QTR_sex==3) then        -- feminine form
-                  QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
-               else                        -- masculine form
-                  QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
-               end
-               msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
-            end   
-         end
-      end
-      nr_poz = string.find(msg, "YOUR_GENDER");
-   end
-
--- still handle YOUR_GENDER(x;y)
-   local nr_1, nr_2, nr_3 = 0;
-   local QTR_forma = "";
-   local nr_poz = string.find(msg, "YOUR_GENDER");    -- when not found, it's: nil
-   while (nr_poz and nr_poz>0) do
-      nr_1 = nr_poz + 1;   
-      while (string.sub(msg, nr_1, nr_1) ~= "(") do
-         nr_1 = nr_1 + 1;
-      end
-      if (string.sub(msg, nr_1, nr_1) == "(") then
-         nr_2 =  nr_1 + 1;
-         while (string.sub(msg, nr_2, nr_2) ~= ";") do
-            nr_2 = nr_2 + 1;
-         end
-         if (string.sub(msg, nr_2, nr_2) == ";") then
-            nr_3 = nr_2 + 1;
-            while (string.sub(msg, nr_3, nr_3) ~= ")") do
-               nr_3 = nr_3 + 1;
-            end
-            if (string.sub(msg, nr_3, nr_3) == ")") then
-               if (QTR_sex==3) then        -- feminine form
-                  QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
-               else                        -- masculine form
-                  QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
-               end
-               msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
-            end   
-         end
-      end
-      nr_poz = string.find(msg, "YOUR_GENDER");
-   end
+   -- Handle all gender formatting cleanly using Spr_Gender and its gsub regexes
+   msg = Spr_Gender(msg);
 
 -- still handle NPC_GENDER(x;y)
    local nr_1, nr_2, nr_3 = 0;
    local QTR_forma = "";
    local NPC_sex = UnitSex("npc");     -- 1:neutral,  2:masculine,  3:feminine
-   local nr_poz = string.find(msg, "NPC_GENDER");    -- when not found, it's: nil
-   while (nr_poz and nr_poz>0) do
-      nr_1 = nr_poz + 1;   
-      while (string.sub(msg, nr_1, nr_1) ~= "(") do
-         nr_1 = nr_1 + 1;
-      end
-      if (string.sub(msg, nr_1, nr_1) == "(") then
-         nr_2 =  nr_1 + 1;
-         while (string.sub(msg, nr_2, nr_2) ~= ";") do
-            nr_2 = nr_2 + 1;
-         end
-         if (string.sub(msg, nr_2, nr_2) == ";") then
-            nr_3 = nr_2 + 1;
-            while (string.sub(msg, nr_3, nr_3) ~= ")") do
-               nr_3 = nr_3 + 1;
-            end
-            if (string.sub(msg, nr_3, nr_3) == ")") then
-               if (NPC_sex==3) then        -- feminine form
-                  QTR_forma = string.sub(msg,nr_2+1,nr_3-1);
-               else                        -- masculine form
-                  QTR_forma = string.sub(msg,nr_1+1,nr_2-1);
-               end
-               msg = string.sub(msg,1,nr_poz-1) .. QTR_forma .. string.sub(msg,nr_3+1);
-            end   
-         end
-      end
-      nr_poz = string.find(msg, "NPC_GENDER");
-   end
+   msg = string.gsub(msg, "NPC_GENDER%s*%(([^;]+);([^)]+)%)", function(masc, fem)
+      return (NPC_sex == 3) and fem or masc
+   end)
 
 -- still handle OWN_NAME(EN;PL)
    local nr_1, nr_2, nr_3 = 0;
@@ -2388,6 +2560,8 @@ function QTR_ExpandUnitInfo(msg)
    end
 
    if (QTR_sex==3) then        -- feminine form
+      msg = string.gsub(msg, "{C}", player_class.M2);
+      msg = string.gsub(msg, "{R}", player_race.M2);
       msg = string.gsub(msg, "YOUR_CLASS1", player_class.M2);          -- Nominative (who, what?)
       msg = string.gsub(msg, "YOUR_CLASS2", player_class.D2);          -- Genitive (of whom, of what?)
       msg = string.gsub(msg, "YOUR_CLASS3", player_class.C2);          -- Dative (to whom, to what?)
@@ -2418,6 +2592,8 @@ function QTR_ExpandUnitInfo(msg)
       msg = string.gsub(msg, " jak na YOUR_CLASS", " jak na "..player_class.B2);        -- Accusative (whom, what?)
       msg = string.gsub(msg, "YOUR_CLASS", player_class.W2);                      -- Vocative - remaining occurrences
    else                    -- płeć męska
+      msg = string.gsub(msg, "{C}", player_class.M1);
+      msg = string.gsub(msg, "{R}", player_race.M1);
       msg = string.gsub(msg, "YOUR_CLASS1", player_class.M1);          -- Nominative (who, what?)
       msg = string.gsub(msg, "YOUR_CLASS2", player_class.D1);          -- Genitive (of whom, of what?)
       msg = string.gsub(msg, "YOUR_CLASS3", player_class.C1);          -- Dative (to whom, to what?)
