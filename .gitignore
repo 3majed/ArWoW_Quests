@@ -9,3 +9,6 @@ Gossip_AR.lua.bak
 hash_test.lua
 QuestData_AR_wotlk.lua.backup
 .gitignore
+calc_hash_simple.lua
+calc_hash.lua
+diff_part.txt

@@ -677,6 +677,83 @@ local function QTR_NormalizeGossipHashText(text)
 end
 
 
+local function QTR_IsArabicGossipText(text)
+   return (type(text) == "string" and text ~= "" and AS_ContainsArabic and AS_ContainsArabic(text));
+end
+
+
+local function QTR_ExtractSavedGossipSourceText(value)
+   if (type(value) ~= "string" or value == "") then
+      return nil;
+   end
+
+   local sourceText = string.match(value, "^(.*)@[^@]*:[^:]*:[^:]*$");
+   if (sourceText and sourceText ~= "") then
+      return sourceText;
+   end
+
+   return value;
+end
+
+
+local function QTR_SanitizeSavedGossipEntries()
+   if (not QTR_GOSSIP) then
+      return 0;
+   end
+
+   local staleKeys = {};
+   for gossipKey, gossipValue in pairs(QTR_GOSSIP) do
+      local sourceText = QTR_ExtractSavedGossipSourceText(gossipValue);
+      if (QTR_IsArabicGossipText(sourceText)) then
+         table.insert(staleKeys, gossipKey);
+      end
+   end
+
+   for _, gossipKey in ipairs(staleKeys) do
+      QTR_GOSSIP[gossipKey] = nil;
+   end
+
+   return #staleKeys;
+end
+
+
+local function QTR_SaveHarvestedGossipText(npcName, hash, gossipText)
+   if (not QTR_GOSSIP or not npcName or not hash) then
+      return false;
+   end
+   if (type(gossipText) ~= "string" or gossipText == "" or QTR_IsArabicGossipText(gossipText)) then
+      return false;
+   end
+
+   QTR_GOSSIP[npcName.."@"..tostring(hash)] = gossipText.."@"..QTR_name..":"..QTR_race..":"..QTR_class;
+   return true;
+end
+
+
+local function QTR_GetOriginalGossipOptionText(titleButton)
+   if (not titleButton) then
+      return nil;
+   end
+
+   if (type(GetGossipOptions) == "function" and titleButton.GetID) then
+      local optionIndex = titleButton:GetID();
+      if (optionIndex and optionIndex > 0) then
+         local optionText = select(((optionIndex - 1) * 2) + 1, GetGossipOptions());
+         if (type(optionText) == "string" and optionText ~= "") then
+            return optionText;
+         end
+      end
+   end
+
+   local buttonText = titleButton:GetText();
+   if (type(buttonText) == "string" and buttonText ~= "" and not QTR_IsArabicGossipText(buttonText)) then
+      return buttonText;
+   end
+
+   return nil;
+end
+
+
 -- Apply translated text and alignment rules to a quest or gossip title button.
 local QTR_TitleButtonAnchorCache = {};
 local QTR_TitleButtonFontCache = {};
@@ -874,9 +951,57 @@ local function QTR_GetQuestTitleTranslation(titleText)
 
   return nil;
 end
+local QTR_QuestieTrackerHooked = false;
+local QTR_QuestieTrackerLabelsPatched = false;
+local QTR_QuestieTrackerLabelState = setmetatable({}, { __mode = "k" });
+local QTR_ElvUITrackerHooked = false;
 
 
-function QTR_PrepareExternalQuestTitleDisplay(questId, displayText, originalTitle, width, fontName, fontSize, measureFontName)
+local function QTR_IsElvUILoaded()
+  return (type(IsAddOnLoaded) == "function" and IsAddOnLoaded("ElvUI"));
+end
+
+
+local function QTR_GetQuestTitleFromDisplayText(displayText)
+  if (not displayText or displayText == "") then
+     return nil;
+  end
+
+  local plainText = string.gsub(displayText, "|c%x%x%x%x%x%x%x%x", "");
+  plainText = string.gsub(plainText, "|r", "");
+
+  if (QTR_QuestList[plainText]) then
+     return plainText;
+  end
+
+  local strippedText = string.gsub(plainText, "^%[[^%]]+%]%s*", "");
+  if (QTR_QuestList[strippedText]) then
+     return strippedText;
+  end
+
+  return nil;
+end
+
+
+local function QTR_ExtractLeadingDisplayControlCodes(text)
+  local controlPrefix = "";
+  local visibleText = text or "";
+
+  while (visibleText ~= "") do
+     local colorCode = string.match(visibleText, "^(|c%x%x%x%x%x%x%x%x)");
+     if (colorCode and colorCode ~= "") then
+        controlPrefix = controlPrefix .. colorCode;
+        visibleText = string.sub(visibleText, string.len(colorCode) + 1);
+     else
+        break;
+     end
+  end
+
+  return controlPrefix, visibleText;
+end
+
+
+function QTR_PrepareExternalQuestTitleDisplay(questId, displayText, originalTitle, width, fontName, fontSize, measureFontName, rtlTitleFirst)
   if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
      return nil;
   end
@@ -925,42 +1050,234 @@ function QTR_PrepareExternalQuestTitleDisplay(questId, displayText, originalTitl
 
   local titleStart, titleEnd = string.find(displayText, originalTitle, 1, true);
   if (titleStart and titleEnd) then
-     return string.sub(displayText, 1, titleStart - 1) .. translatedDisplayTitle .. string.sub(displayText, titleEnd + 1);
+     local prefixText = string.sub(displayText, 1, titleStart - 1);
+     local suffixText = string.sub(displayText, titleEnd + 1);
+
+     if (rtlTitleFirst and AS_ContainsArabic and AS_ContainsArabic(translatedQuestTitle)) then
+        local controlPrefix, visiblePrefix = QTR_ExtractLeadingDisplayControlCodes(prefixText);
+        return controlPrefix .. translatedDisplayTitle .. visiblePrefix .. suffixText;
+     end
+
+     return prefixText .. translatedDisplayTitle .. suffixText;
   end
 
   return translatedDisplayTitle;
 end
 
 
-local QTR_QuestieTrackerHooked = false;
-local QTR_QuestieTrackerLabelsPatched = false;
-local QTR_QuestieTrackerLabelState = setmetatable({}, { __mode = "k" });
-local QTR_ElvUITrackerHooked = false;
-
-
-local function QTR_IsElvUILoaded()
-  return (type(IsAddOnLoaded) == "function" and IsAddOnLoaded("ElvUI"));
-end
-
-
-local function QTR_GetQuestTitleFromDisplayText(displayText)
-  if (not displayText or displayText == "") then
+local function QTR_SelectQuestIdFromTitle(titleText)
+  if (not titleText or titleText == "" or not QTR_QuestList) then
      return nil;
   end
 
-  local plainText = string.gsub(displayText, "|c%x%x%x%x%x%x%x%x", "");
-  plainText = string.gsub(plainText, "|r", "");
-
-  if (QTR_QuestList[plainText]) then
-     return plainText;
+  local questIds = QTR_QuestList[titleText];
+  if (not questIds) then
+     return nil;
   end
 
-  local strippedText = string.gsub(plainText, "^%[[^%]]+%]%s*", "");
-  if (QTR_QuestList[strippedText]) then
-     return strippedText;
+  local selectedQuestId = nil;
+  if (string.find(questIds, ",") == nil) then
+     selectedQuestId = questIds;
+  else
+     for questId in string.gmatch(questIds, "[^,]+") do
+        if (not QTR_PC[questId]) then
+           selectedQuestId = questId;
+           break;
+        end
+        if (not selectedQuestId) then
+           selectedQuestId = questId;
+        end
+     end
+  end
+
+  if (selectedQuestId and selectedQuestId ~= "") then
+     return tostring(selectedQuestId);
   end
 
   return nil;
+end
+
+
+local function QTR_GetQuestDataFromTitle(titleText)
+  local questId = QTR_SelectQuestIdFromTitle(titleText);
+  if (questId and QTR_QuestData and QTR_QuestData[questId]) then
+     return questId, QTR_QuestData[questId];
+  end
+  return nil, nil;
+end
+
+
+local function QTR_GetExternalQuestTextTranslation(eventName, titleText)
+  if (not QTR_PS or QTR_PS["active"] ~= "1") then
+     return nil, nil;
+  end
+
+  local fieldByEvent = {
+     QUEST_DETAIL = "Description",
+     QUEST_PROGRESS = "Progress",
+     QUEST_COMPLETE = "Completion",
+  };
+  local fieldName = fieldByEvent[eventName];
+  if (not fieldName) then
+     return nil, nil;
+  end
+
+  local questId, questData = QTR_GetQuestDataFromTitle(titleText or "");
+  if (questData and questData[fieldName]) then
+     return QTR_ExpandUnitInfo(questData[fieldName]), questId;
+  end
+
+  return nil, questId;
+end
+
+
+local function QTR_GetExternalQuestTextTranslationFromSource(titleText, sourceText)
+  if (type(sourceText) ~= "string" or sourceText == "") then
+     return nil, nil, nil;
+  end
+
+  if (type(GetQuestText) == "function") then
+     local currentQuestText = GetQuestText();
+     if (currentQuestText and currentQuestText ~= "" and currentQuestText == sourceText) then
+        local translatedText, questId = QTR_GetExternalQuestTextTranslation("QUEST_DETAIL", titleText);
+        return translatedText, questId, "QUEST_DETAIL";
+     end
+  end
+
+  if (type(GetProgressText) == "function") then
+     local currentProgressText = GetProgressText();
+     if (currentProgressText and currentProgressText ~= "" and currentProgressText == sourceText) then
+        local translatedText, questId = QTR_GetExternalQuestTextTranslation("QUEST_PROGRESS", titleText);
+        return translatedText, questId, "QUEST_PROGRESS";
+     end
+  end
+
+  if (type(GetRewardText) == "function") then
+     local currentRewardText = GetRewardText();
+     if (currentRewardText and currentRewardText ~= "" and currentRewardText == sourceText) then
+        local translatedText, questId = QTR_GetExternalQuestTextTranslation("QUEST_COMPLETE", titleText);
+        return translatedText, questId, "QUEST_COMPLETE";
+     end
+  end
+
+  return nil, QTR_SelectQuestIdFromTitle(titleText), nil;
+end
+
+
+local function QTR_GetExternalQuestObjectivesTranslation(titleText)
+  if (not QTR_PS or QTR_PS["active"] ~= "1") then
+     return nil, nil;
+  end
+
+  local questId, questData = QTR_GetQuestDataFromTitle(titleText or "");
+  if (questData and questData["Objectives"]) then
+     return QTR_ExpandUnitInfo(questData["Objectives"]), questId;
+  end
+
+  return nil, questId;
+end
+
+
+local function QTR_GetRawGossipTranslation(originalText, useNormalizedHash)
+  if (not QTR_PS or QTR_PS["gossip"] ~= "1") then
+     return nil, nil;
+  end
+  if (type(originalText) ~= "string" or originalText == "") then
+     return nil, nil;
+  end
+
+  local hashSource = originalText;
+  if (useNormalizedHash) then
+     hashSource = QTR_NormalizeGossipHashText(originalText);
+  end
+
+  local hash = StringHash(hashSource);
+  if (GS_Gossip and GS_Gossip[hash]) then
+     local translatedText = QTR_ExpandGossipInfo(GS_Gossip[hash]);
+     translatedText = string.gsub(translatedText, "#", "\n");
+     return translatedText, hash;
+  end
+
+  return nil, hash;
+end
+
+
+local function QTR_GetExternalGossipBodyTranslation(originalText, useNormalizedHash)
+  local translatedText, hash = QTR_GetRawGossipTranslation(originalText, useNormalizedHash);
+  if (translatedText and translatedText ~= "") then
+     return translatedText, hash;
+  end
+
+  if (hash and type(originalText) == "string" and originalText ~= "" and not QTR_IsArabicGossipText(originalText)) then
+     local npcName = nil;
+     if (type(UnitName) == "function") then
+        npcName = UnitName("npc") or UnitName("questnpc");
+     end
+     if (npcName and npcName ~= "") then
+        QTR_SaveHarvestedGossipText(npcName, hash, originalText);
+     end
+  end
+
+  return nil, hash;
+end
+
+
+local function QTR_GetExternalChoiceTranslatedText(displayText, width, fontName, fontSize)
+  if (type(displayText) ~= "string" or displayText == "") then
+     return nil, nil;
+  end
+
+  local originalTitle = QTR_GetQuestTitleFromDisplayText(displayText);
+  if (originalTitle) then
+     local translatedQuestText = QTR_PrepareExternalQuestTitleDisplay(nil, displayText, originalTitle, width, fontName, fontSize, fontName, false);
+     if (translatedQuestText and translatedQuestText ~= "" and translatedQuestText ~= displayText) then
+        return translatedQuestText, "quest";
+     end
+  end
+
+  local translatedGossipText, hash = QTR_GetExternalGossipBodyTranslation(displayText, false);
+  if (translatedGossipText and translatedGossipText ~= "") then
+     if (AS_ContainsArabic and AS_ContainsArabic(translatedGossipText)) then
+        translatedGossipText = QTR_PrepareWrappedArabicText(translatedGossipText, width, fontName, fontSize);
+     end
+     return translatedGossipText, "gossip";
+  end
+
+  return nil, nil;
+end
+
+
+local function QTR_GetExternalFontState(fontString, stateMap)
+  if (not fontString or not stateMap or not fontString.GetFont or not fontString.SetFont) then
+     return nil;
+  end
+
+  local fontState = stateMap[fontString];
+  if (not fontState) then
+     local originalFont, originalSize, originalFlags = fontString:GetFont();
+     fontState = {
+        font = originalFont or Original_Font2,
+        size = originalSize or 13,
+        flags = originalFlags,
+        justify = fontString.GetJustifyH and fontString:GetJustifyH(),
+     };
+     stateMap[fontString] = fontState;
+  end
+
+  return fontState;
+end
+
+
+local function QTR_RestoreExternalFontState(fontString, stateMap)
+  local fontState = QTR_GetExternalFontState(fontString, stateMap);
+  if (not fontState) then
+     return;
+  end
+
+  fontString:SetFont(fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
+  if (fontString.SetJustifyH) then
+     fontString:SetJustifyH(fontState.justify or "LEFT");
+  end
 end
 
 
@@ -1204,6 +1521,2164 @@ local function QTR_RefreshQuestieTracker()
 end
 
 
+local QTR_QuestieMapTooltipHooked = false;
+local QTR_QuestieUnitTooltipHooked = false;
+
+
+local function QTR_GetQuestieUnitTooltipModules()
+  if (type(QuestieLoader) ~= "table" or type(QuestieLoader.ImportModule) ~= "function") then
+     return nil, nil, nil;
+  end
+
+  local tooltipsOk, QuestieTooltips = pcall(function()
+     return QuestieLoader:ImportModule("QuestieTooltips");
+  end);
+  if (not tooltipsOk or not QuestieTooltips) then
+     return nil, nil, nil;
+  end
+
+  local dbOk, QuestieDB = pcall(function()
+     return QuestieLoader:ImportModule("QuestieDB");
+  end);
+  local libOk, QuestieLib = pcall(function()
+     return QuestieLoader:ImportModule("QuestieLib");
+  end);
+
+  return QuestieTooltips, (dbOk and QuestieDB or nil), (libOk and QuestieLib or nil);
+end
+
+
+local function QTR_GetQuestieMapTooltipModules()
+  if (type(QuestieLoader) ~= "table" or type(QuestieLoader.ImportModule) ~= "function") then
+     return nil, nil, nil;
+  end
+
+  local mapOk, MapIconTooltip = pcall(function()
+     return QuestieLoader:ImportModule("MapIconTooltip");
+  end);
+  if (not mapOk or not MapIconTooltip) then
+     return nil, nil, nil;
+  end
+
+  local dbOk, QuestieDB = pcall(function()
+     return QuestieLoader:ImportModule("QuestieDB");
+  end);
+  local libOk, QuestieLib = pcall(function()
+     return QuestieLoader:ImportModule("QuestieLib");
+  end);
+
+  return MapIconTooltip, (dbOk and QuestieDB or nil), (libOk and QuestieLib or nil);
+end
+
+
+local function QTR_GetQuestieTooltipWrapWidth(tooltip)
+  local width = 375;
+  if (tooltip and tooltip.GetWidth) then
+     local tooltipWidth = tooltip:GetWidth();
+     if (tooltipWidth and tooltipWidth > width) then
+        width = tooltipWidth;
+     end
+  end
+  return width;
+end
+
+
+local function QTR_ExtractLeadingTextureTags(text)
+  local texturePrefix = "";
+  local visibleText = text or "";
+
+  while (visibleText ~= "") do
+     local textureTag = string.match(visibleText, "^(|T.-|t%s*)");
+     if (textureTag and textureTag ~= "") then
+        texturePrefix = texturePrefix .. textureTag;
+        visibleText = string.sub(visibleText, string.len(textureTag) + 1);
+     else
+        break;
+     end
+  end
+
+  return texturePrefix, visibleText;
+end
+
+
+local function QTR_SplitMultilineText(text)
+  local lines = {};
+  if (not text or text == "") then
+     return lines;
+  end
+
+  text = string.gsub(text, "\r\n", "\n");
+  text = string.gsub(text, "\r", "\n");
+  for line in string.gmatch(text .. "\n", "(.-)\n") do
+     lines[#lines + 1] = line;
+  end
+
+  while (#lines > 0 and lines[#lines] == "") do
+     table.remove(lines);
+  end
+
+  return lines;
+end
+
+
+local function QTR_GetQuestieQuestTitleFromDb(QuestieDB, questId)
+  if (not QuestieDB or not questId) then
+     return nil;
+  end
+
+  if (type(QuestieDB.QueryQuestSingle) == "function") then
+     local questTitle = QuestieDB.QueryQuestSingle(questId, "name");
+     if (questTitle and questTitle ~= "") then
+        return questTitle;
+     end
+  end
+
+  if (type(QuestieDB.GetQuest) == "function") then
+     local quest = QuestieDB.GetQuest(questId);
+     if (quest and quest.name and quest.name ~= "") then
+        return quest.name;
+     end
+  end
+
+  return nil;
+end
+
+
+local function QTR_GetQuestieTooltipTranslatedTitleDisplay(tooltip, questId, displayText, originalTitle)
+  if (not displayText or displayText == "") then
+     return nil;
+  end
+  if (AS_ContainsArabic and AS_ContainsArabic(displayText)) then
+     return displayText;
+  end
+
+  local translatedQuestTitle = nil;
+  if (questId) then
+     translatedQuestTitle = QTR_GetTranslatedQuestTitleById(tostring(questId));
+  end
+  if (not translatedQuestTitle and originalTitle and originalTitle ~= "") then
+     translatedQuestTitle = QTR_GetQuestTitleTranslation(originalTitle);
+  end
+  if (not translatedQuestTitle or translatedQuestTitle == "") then
+     return nil;
+  end
+
+   local translatedDisplayText = QTR_PrepareExternalQuestTitleDisplay(questId, displayText, originalTitle or "", nil, QTR_Font2, 13, QTR_Font2, false);
+  if (translatedDisplayText and translatedDisplayText ~= "" and tooltip) then
+     tooltip.qtrQuestieTitleLineData = tooltip.qtrQuestieTitleLineData or {};
+     local titleLineData = {
+        questId = questId,
+        displayText = displayText,
+        originalTitle = originalTitle or "",
+     };
+     tooltip.qtrQuestieTitleLineData[displayText] = titleLineData;
+     tooltip.qtrQuestieTitleLineData[translatedDisplayText] = titleLineData;
+  end
+
+  return translatedDisplayText;
+end
+
+
+local function QTR_RegisterQuestieTooltipTitleData(tooltip, questId, displayText, originalTitle)
+  if (not tooltip or not questId or not originalTitle or originalTitle == "") then
+     return nil;
+  end
+
+  tooltip.qtrQuestieTitleLineData = tooltip.qtrQuestieTitleLineData or {};
+  local titleLineData = {
+     questId = questId,
+     displayText = displayText,
+     originalTitle = originalTitle,
+  };
+
+  if (displayText and displayText ~= "") then
+     tooltip.qtrQuestieTitleLineData[displayText] = titleLineData;
+  end
+  tooltip.qtrQuestieTitleLineData[originalTitle] = titleLineData;
+  return titleLineData;
+end
+
+
+local function QTR_PrimeQuestieNextChainTitleData(tooltip, QuestieDB)
+  if (not tooltip or type(tooltip.npcAndObjectOrder) ~= "table" or not QuestieDB or type(QuestieDB.QueryQuestSingle) ~= "function" or type(QuestieDB.GetQuest) ~= "function") then
+     return;
+  end
+
+  for _, quests in pairs(tooltip.npcAndObjectOrder) do
+     for _, questData in pairs(quests) do
+        if (type(questData) == "table" and questData.questId) then
+           local nextQuestInChain = QuestieDB.QueryQuestSingle(questData.questId, "nextQuestInChain");
+           if (nextQuestInChain and nextQuestInChain > 0) then
+              local nextQuest = QuestieDB.GetQuest(nextQuestInChain);
+              while (nextQuest ~= nil) do
+                 if (nextQuest.Id and nextQuest.name and nextQuest.name ~= "") then
+                    QTR_RegisterQuestieTooltipTitleData(tooltip, nextQuest.Id, nextQuest.name, nextQuest.name);
+                 end
+                 nextQuest = QuestieDB.GetQuest(nextQuest.nextQuestInChain);
+              end
+           end
+        end
+     end
+  end
+end
+
+
+local function QTR_PrimeQuestieTooltipTitleData(tooltip, QuestieDB, QuestieLib)
+  if (not tooltip) then
+     return;
+  end
+
+  tooltip.qtrQuestieTitleLineData = {};
+
+  if (type(tooltip.npcAndObjectOrder) == "table") then
+     for _, quests in pairs(tooltip.npcAndObjectOrder) do
+        for _, questData in pairs(quests) do
+           if (type(questData) == "table" and questData.questId and questData.title and questData.title ~= "") then
+              local questId = tonumber(questData.questId) or questData.questId;
+              local originalTitle = QTR_GetQuestieQuestTitleFromDb(QuestieDB, questId);
+              QTR_GetQuestieTooltipTranslatedTitleDisplay(tooltip, questId, questData.title, originalTitle);
+           end
+        end
+     end
+  end
+
+  QTR_PrimeQuestieNextChainTitleData(tooltip, QuestieDB);
+
+  if (QTR_PS and QTR_PS["transtitle"] == "1" and QuestieLib and type(QuestieLib.GetColoredQuestName) == "function" and type(tooltip.questOrder) == "table") then
+     for questId in pairs(tooltip.questOrder) do
+        local displayText = QuestieLib:GetColoredQuestName(questId, Questie.db.profile.enableTooltipsQuestLevel, true, true);
+        local originalTitle = QTR_GetQuestieQuestTitleFromDb(QuestieDB, questId);
+        if (displayText and displayText ~= "") then
+           QTR_GetQuestieTooltipTranslatedTitleDisplay(tooltip, questId, displayText, originalTitle);
+        end
+     end
+  end
+end
+
+
+local function QTR_GetQuestieTooltipTranslatedDescription(questId)
+  local questKey = questId and tostring(questId);
+  if (not questKey or not QTR_QuestData or not QTR_QuestData[questKey]) then
+     return nil;
+  end
+
+  local translatedDescription = QTR_QuestData[questKey]["Description"];
+  if (not translatedDescription or translatedDescription == "") then
+     return nil;
+  end
+
+  translatedDescription = QTR_ExpandUnitInfo(translatedDescription);
+  if (not translatedDescription or translatedDescription == "") then
+     return nil;
+  end
+
+  return translatedDescription;
+end
+
+
+local QTR_QuestieTooltipFontState = setmetatable({}, { __mode = "k" });
+
+
+local function QTR_GetQuestieTooltipTitleLineWidth(fontString, tooltip)
+  local titleWidth = nil;
+
+  if (fontString and fontString.GetWidth) then
+     titleWidth = fontString:GetWidth();
+  end
+
+  if ((not titleWidth or titleWidth < 40) and fontString and fontString.GetParent) then
+     local parentFrame = fontString:GetParent();
+     if (parentFrame and parentFrame.GetWidth) then
+        local parentWidth = parentFrame:GetWidth();
+        if (parentWidth and parentWidth > 60) then
+           titleWidth = parentWidth - 30;
+        end
+     end
+  end
+
+  if ((not titleWidth or titleWidth < 40) and tooltip and tooltip.GetWidth) then
+     local tooltipWidth = tooltip:GetWidth();
+     if (tooltipWidth and tooltipWidth > 60) then
+        titleWidth = tooltipWidth - 30;
+     end
+  end
+
+  if (not titleWidth or titleWidth < 40) then
+     titleWidth = 260;
+  end
+
+  return titleWidth;
+end
+
+
+local function QTR_FindQuestieTitleLineData(tooltip, fontText, lookupText)
+  local titleDataMap = tooltip and tooltip.qtrQuestieTitleLineData;
+  if (type(titleDataMap) ~= "table") then
+     return nil;
+  end
+
+  local titleLineData = titleDataMap[fontText] or titleDataMap[lookupText];
+  if (titleLineData) then
+     return titleLineData;
+  end
+
+  local seenEntries = {};
+  for _, entry in pairs(titleDataMap) do
+     if (type(entry) == "table" and entry.originalTitle and entry.originalTitle ~= "" and not seenEntries[entry]) then
+        seenEntries[entry] = true;
+        if (string.find(fontText or "", entry.originalTitle, 1, true) or string.find(lookupText or "", entry.originalTitle, 1, true)) then
+           return entry;
+        end
+     end
+  end
+
+  return nil;
+end
+
+
+local function QTR_UpdateQuestieTooltipFontString(fontString, tooltip)
+  if (not fontString or not fontString.GetText or not fontString.GetFont or not fontString.SetFont) then
+     return;
+  end
+
+  local fontState = QTR_QuestieTooltipFontState[fontString];
+  if (not fontState) then
+     local originalFont, originalSize, originalFlags = fontString:GetFont();
+     fontState = {
+        font = originalFont or Original_Font2,
+        size = originalSize or 13,
+        flags = originalFlags,
+        justify = fontString.GetJustifyH and fontString:GetJustifyH(),
+     };
+     QTR_QuestieTooltipFontState[fontString] = fontState;
+  end
+
+  local fontText = fontString:GetText() or "";
+  local texturePrefix, lookupText = QTR_ExtractLeadingTextureTags(fontText);
+   local titleLineData = QTR_FindQuestieTitleLineData(tooltip, fontText, lookupText);
+  if (titleLineData) then
+     local titleWidth = QTR_GetQuestieTooltipTitleLineWidth(fontString, tooltip);
+     if (texturePrefix ~= "") then
+        if (AS_TestLine == nil and AS_CreateTestLine) then
+           AS_CreateTestLine();
+        end
+        if (AS_TestLine and AS_TestLine.text) then
+           AS_TestLine.text:SetFont(QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
+           AS_TestLine.text:SetText(texturePrefix);
+           titleWidth = titleWidth - (AS_TestLine.text:GetStringWidth() or 0);
+           if (titleWidth < 40) then
+              titleWidth = QTR_GetQuestieTooltipTitleLineWidth(fontString, tooltip);
+           end
+        end
+     end
+     local sourceDisplayText = titleLineData.displayText or lookupText or fontText;
+     if (sourceDisplayText == titleLineData.originalTitle) then
+        sourceDisplayText = lookupText or fontText;
+     end
+   local shapedTitleText = QTR_PrepareExternalQuestTitleDisplay(titleLineData.questId, sourceDisplayText, titleLineData.originalTitle, titleWidth, QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, QTR_Font2 or fontState.font or Original_Font2, false);
+     if (shapedTitleText and shapedTitleText ~= "") then
+        fontString:SetFont(QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
+        if (fontString.SetJustifyH) then
+           fontString:SetJustifyH("RIGHT");
+        end
+        fontString:SetText(texturePrefix .. shapedTitleText);
+        return;
+     end
+  end
+
+  if (fontText ~= "" and AS_ContainsArabic and AS_ContainsArabic(fontText)) then
+     fontString:SetFont(QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
+     if (fontString.SetJustifyH) then
+        fontString:SetJustifyH("RIGHT");
+     end
+  else
+     fontString:SetFont(fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
+     if (fontString.SetJustifyH) then
+        fontString:SetJustifyH(fontState.justify or "LEFT");
+     end
+  end
+end
+
+
+local function QTR_ApplyQuestieTooltipFonts(tooltip)
+  if (not tooltip or not tooltip.GetName or not tooltip.NumLines) then
+     return;
+  end
+
+  local tooltipName = tooltip:GetName();
+  if (not tooltipName or tooltipName == "") then
+     return;
+  end
+
+  for lineIndex = 1, (tooltip:NumLines() or 0) do
+     QTR_UpdateQuestieTooltipFontString(_G[tooltipName .. "TextLeft" .. lineIndex], tooltip);
+     QTR_UpdateQuestieTooltipFontString(_G[tooltipName .. "TextRight" .. lineIndex], tooltip);
+  end
+end
+
+
+local function QTR_WrapQuestieMapTooltipRebuild(tooltip, QuestieDB, QuestieLib)
+  if (not tooltip or type(tooltip._Rebuild) ~= "function") then
+     return false;
+  end
+  if (tooltip.qtrQuestieWrappedFunc and tooltip._Rebuild == tooltip.qtrQuestieWrappedFunc) then
+     return true;
+  end
+
+  local originalRebuild = tooltip._Rebuild;
+  local wrappedRebuild = function(self)
+     local savedQuestData = {};
+     local originalGetColoredQuestName = nil;
+     local originalTextWrap = nil;
+     self.qtrQuestieTitleLineData = {};
+
+     if (QTR_PS and QTR_PS["active"] == "1") then
+        if (type(self.npcAndObjectOrder) == "table") then
+           for _, quests in pairs(self.npcAndObjectOrder) do
+              for _, questData in pairs(quests) do
+                 if (type(questData) == "table" and questData.questId) then
+                    local questId = tonumber(questData.questId) or questData.questId;
+                    local originalTitle = QTR_GetQuestieQuestTitleFromDb(QuestieDB, questId);
+
+                    if (QTR_PS["transtitle"] == "1" and questData.title and questData.title ~= "") then
+                       local translatedTitle = QTR_GetQuestieTooltipTranslatedTitleDisplay(self, questId, questData.title, originalTitle);
+                       if (translatedTitle and translatedTitle ~= "" and translatedTitle ~= questData.title) then
+                          if (not savedQuestData[questData]) then
+                             savedQuestData[questData] = { title = questData.title, subData = questData.subData };
+                          end
+                          questData.title = translatedTitle;
+                       end
+                    end
+
+                    local translatedDescription = QTR_GetQuestieTooltipTranslatedDescription(questId);
+                    if (translatedDescription) then
+                       if (not savedQuestData[questData]) then
+                          savedQuestData[questData] = { title = questData.title, subData = questData.subData };
+                       end
+                       questData.subData = translatedDescription;
+                    end
+                 end
+              end
+           end
+        end
+
+        QTR_PrimeQuestieNextChainTitleData(self, QuestieDB);
+
+        if (QuestieLib and type(QuestieLib.TextWrap) == "function") then
+           originalTextWrap = QuestieLib.TextWrap;
+           QuestieLib.TextWrap = function(libSelf, line, prefix, combineTrailing, desiredWidth)
+              if (type(line) == "string" and line ~= "" and AS_ContainsArabic and AS_ContainsArabic(line)) then
+                 local wrappedText = QTR_PrepareWrappedArabicText(line, desiredWidth or QTR_GetQuestieTooltipWrapWidth(self), QTR_Font2, 13);
+                 local wrappedLines = QTR_SplitMultilineText(wrappedText);
+                 if (#wrappedLines == 0) then
+                    return { (prefix or "") .. line };
+                 end
+
+                 local outputLines = {};
+                 for _, wrappedLine in ipairs(wrappedLines) do
+                    outputLines[#outputLines + 1] = (prefix or "") .. wrappedLine;
+                 end
+                 return outputLines;
+              end
+
+              return originalTextWrap(libSelf, line, prefix, combineTrailing, desiredWidth);
+           end;
+        end
+
+        if (QTR_PS["transtitle"] == "1" and QuestieLib and type(QuestieLib.GetColoredQuestName) == "function" and type(self.questOrder) == "table") then
+           local translatedQuestIds = {};
+           for questId in pairs(self.questOrder) do
+              translatedQuestIds[tostring(questId)] = true;
+           end
+
+           originalGetColoredQuestName = QuestieLib.GetColoredQuestName;
+           QuestieLib.GetColoredQuestName = function(libSelf, questId, ...)
+              local displayText = originalGetColoredQuestName(libSelf, questId, ...);
+              if (not translatedQuestIds[tostring(questId)]) then
+                 return displayText;
+              end
+
+              local originalTitle = QTR_GetQuestieQuestTitleFromDb(QuestieDB, questId);
+              local translatedDisplayText = QTR_GetQuestieTooltipTranslatedTitleDisplay(self, questId, displayText, originalTitle);
+              return translatedDisplayText or displayText;
+           end;
+        end
+     end
+
+     local rebuildOk, rebuildErr = pcall(originalRebuild, self);
+
+     if (originalGetColoredQuestName) then
+        QuestieLib.GetColoredQuestName = originalGetColoredQuestName;
+     end
+     if (originalTextWrap) then
+        QuestieLib.TextWrap = originalTextWrap;
+     end
+     for questData, savedData in pairs(savedQuestData) do
+        questData.title = savedData.title;
+        questData.subData = savedData.subData;
+     end
+
+     if (rebuildOk) then
+        QTR_ApplyQuestieTooltipFonts(self);
+     end
+
+     if (not rebuildOk and type(geterrorhandler) == "function") then
+        geterrorhandler()(rebuildErr);
+     end
+  end;
+
+  tooltip.qtrQuestieWrappedFunc = wrappedRebuild;
+  tooltip._Rebuild = wrappedRebuild;
+  return true;
+end
+
+
+local function QTR_GetQuestieTooltipFrame(ownerFrame)
+  if (not ownerFrame) then
+     return nil;
+  end
+
+  if (type(QuestieCompat) == "table" and QuestieCompat.Tooltip and QuestieCompat.Tooltip._owner == ownerFrame) then
+     return QuestieCompat.Tooltip;
+  end
+  if (WorldMapTooltip and WorldMapTooltip._owner == ownerFrame) then
+     return WorldMapTooltip;
+  end
+  if (GameTooltip and GameTooltip._owner == ownerFrame) then
+     return GameTooltip;
+  end
+
+  return nil;
+end
+
+
+local function QTR_TranslateQuestieUnitTooltipLines(key, tooltipLines, QuestieTooltips, QuestieDB, QuestieLib)
+  if (not key or type(tooltipLines) ~= "table") then
+     return tooltipLines;
+  end
+  if (string.find(key, "^m_") == nil) then
+     return tooltipLines;
+  end
+  if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
+     return tooltipLines;
+  end
+  if (not QuestieTooltips or type(QuestieTooltips.lookupByKey) ~= "table" or not QuestieLib or type(QuestieLib.GetColoredQuestName) ~= "function") then
+     return tooltipLines;
+  end
+
+  local tooltipEntries = QuestieTooltips.lookupByKey[key];
+  if (type(tooltipEntries) ~= "table") then
+     return tooltipLines;
+  end
+
+  local titleEntries = {};
+  local seenQuestIds = {};
+  for _, tooltipData in pairs(tooltipEntries) do
+     local questId = tooltipData and tooltipData.questId;
+     local questKey = questId and tostring(questId);
+     if (questKey and not seenQuestIds[questKey]) then
+        seenQuestIds[questKey] = true;
+
+        local originalTitle = QTR_GetQuestieQuestTitleFromDb(QuestieDB, questId);
+        if (originalTitle and originalTitle ~= "") then
+           titleEntries[#titleEntries + 1] = {
+              questId = questId,
+              originalTitle = originalTitle,
+              displayText = QuestieLib:GetColoredQuestName(questId, Questie.db.profile.enableTooltipsQuestLevel, true, true),
+           };
+        end
+     end
+  end
+
+  if (#titleEntries == 0) then
+     return tooltipLines;
+  end
+
+  local translatedLines = {};
+  for _, tooltipLine in ipairs(tooltipLines) do
+     local replacedLine = false;
+     if (type(tooltipLine) == "string" and tooltipLine ~= "" and (not AS_ContainsArabic or not AS_ContainsArabic(tooltipLine))) then
+        for _, titleEntry in ipairs(titleEntries) do
+           if (((titleEntry.displayText and tooltipLine == titleEntry.displayText) or string.find(tooltipLine, titleEntry.originalTitle, 1, true))) then
+              local translatedLine = QTR_PrepareExternalQuestTitleDisplay(titleEntry.questId, tooltipLine, titleEntry.originalTitle, 240, QTR_Font2, 13, QTR_Font2, false);
+              if (translatedLine and translatedLine ~= "") then
+                 translatedLines[#translatedLines + 1] = translatedLine;
+              else
+                 translatedLines[#translatedLines + 1] = tooltipLine;
+              end
+              replacedLine = true;
+              break;
+           end
+        end
+     end
+
+     if (not replacedLine) then
+        translatedLines[#translatedLines + 1] = tooltipLine;
+     end
+  end
+
+  return translatedLines;
+end
+
+
+local function QTR_TryHookQuestieMapTooltips()
+  local MapIconTooltip, QuestieDB, QuestieLib = QTR_GetQuestieMapTooltipModules();
+  if (not MapIconTooltip or type(MapIconTooltip.Show) ~= "function") then
+     return false;
+  end
+  if (QTR_QuestieMapTooltipHooked or type(hooksecurefunc) ~= "function") then
+     return QTR_QuestieMapTooltipHooked;
+  end
+
+  hooksecurefunc(MapIconTooltip, "Show", function(iconFrame)
+     if (not iconFrame or iconFrame.miniMapIcon) then
+        return;
+     end
+
+     local tooltip = QTR_GetQuestieTooltipFrame(iconFrame);
+     if (not tooltip or type(tooltip._Rebuild) ~= "function") then
+        return;
+     end
+     if (not QTR_WrapQuestieMapTooltipRebuild(tooltip, QuestieDB, QuestieLib)) then
+        return;
+     end
+     if (QTR_PS and QTR_PS["active"] == "1") then
+        QTR_PrimeQuestieTooltipTitleData(tooltip, QuestieDB, QuestieLib);
+        QTR_ApplyQuestieTooltipFonts(tooltip);
+     end
+  end);
+
+  QTR_QuestieMapTooltipHooked = true;
+  return true;
+end
+
+
+local function QTR_TryHookQuestieUnitTooltips()
+  local QuestieTooltips, QuestieDB, QuestieLib = QTR_GetQuestieUnitTooltipModules();
+  if (not QuestieTooltips or type(QuestieTooltips.GetTooltip) ~= "function" or type(QuestieTooltips.private) ~= "table" or type(QuestieTooltips.private.AddUnitDataToTooltip) ~= "function") then
+     return false;
+  end
+
+  if (not QuestieTooltips.qtrWrappedGetTooltipFunc or QuestieTooltips.GetTooltip ~= QuestieTooltips.qtrWrappedGetTooltipFunc) then
+     local originalGetTooltip = QuestieTooltips.GetTooltip;
+     local wrappedGetTooltip = function(self, key, ...)
+        local tooltipLines = originalGetTooltip(self, key, ...);
+        return QTR_TranslateQuestieUnitTooltipLines(key, tooltipLines, QuestieTooltips, QuestieDB, QuestieLib);
+     end;
+
+     QuestieTooltips.qtrWrappedGetTooltipFunc = wrappedGetTooltip;
+     QuestieTooltips.GetTooltip = wrappedGetTooltip;
+  end
+
+  if (not QuestieTooltips.private.qtrUnitTooltipFontHooked and type(hooksecurefunc) == "function") then
+     hooksecurefunc(QuestieTooltips.private, "AddUnitDataToTooltip", function(tooltip)
+        if (not tooltip or tooltip ~= GameTooltip) then
+           return;
+        end
+
+        tooltip.qtrQuestieTitleLineData = {};
+        QTR_ApplyQuestieTooltipFonts(tooltip);
+     end);
+     QuestieTooltips.private.qtrUnitTooltipFontHooked = true;
+  end
+
+  QTR_QuestieUnitTooltipHooked = (QuestieTooltips.GetTooltip == QuestieTooltips.qtrWrappedGetTooltipFunc);
+  return QTR_QuestieUnitTooltipHooked;
+end
+
+
+QTR_ImmersionHooked = false;
+QTR_StorylineHooked = false;
+QTR_ImmersionFontState = setmetatable({}, { __mode = "k" });
+QTR_StorylineFontState = setmetatable({}, { __mode = "k" });
+
+
+local function QTR_SetExternalPrefixedText(fontString, originalText, translatedText, fontName, fontSize)
+  if (not fontString or not translatedText or translatedText == "") then
+     return;
+  end
+
+  local prefixTexture, remainder = QTR_ExtractLeadingTextureTags(originalText or "");
+  local prefixColor, _ = QTR_ExtractLeadingDisplayControlCodes(remainder or "");
+  local suffixColor = string.match(remainder or "", "(|r%s*)$") or "";
+  local wrapWidth = nil;
+  if (fontString.GetWidth) then
+     wrapWidth = fontString:GetWidth();
+  end
+
+  fontString:SetFont(fontName, fontSize);
+  if (AS_ContainsArabic and AS_ContainsArabic(translatedText)) then
+     fontString:SetJustifyH("RIGHT");
+     fontString:SetText((prefixTexture or "") .. (prefixColor or "") .. QTR_PrepareWrappedArabicText(translatedText, wrapWidth, fontName, fontSize) .. suffixColor);
+  else
+     fontString:SetJustifyH("LEFT");
+     fontString:SetText((prefixTexture or "") .. (prefixColor or "") .. translatedText .. suffixColor);
+  end
+end
+
+
+local QTR_ImmersionGossipBodyTargetWidth = 360;
+
+
+local function QTR_GetExternalGossipBodyWrapWidth(fontString)
+  if (not fontString) then
+     return 280;
+  end
+
+  local wrapWidth = nil;
+  if (fontString.GetLeft and fontString.GetRight) then
+     local left = fontString:GetLeft();
+     local right = fontString:GetRight();
+     if (left and right and right > left) then
+        wrapWidth = right - left;
+     end
+  end
+
+  if ((not wrapWidth or wrapWidth < 220) and fontString.GetParent) then
+     local parentFrame = fontString:GetParent();
+     if (parentFrame and parentFrame.GetWidth) then
+        local parentWidth = parentFrame:GetWidth();
+        if (parentWidth and parentWidth > 0) then
+           wrapWidth = math.min(QTR_ImmersionGossipBodyTargetWidth, parentWidth - 185);
+        end
+     end
+  end
+
+  if (not wrapWidth or wrapWidth < 220) then
+     wrapWidth = QTR_ImmersionGossipBodyTargetWidth;
+  end
+
+  return wrapWidth;
+end
+
+
+local function QTR_SetExternalGossipBodyText(fontString, translatedText, fontName, fontSize, skipRetry)
+  if (not fontString) then
+     return;
+  end
+
+   fontString.qtrQuestPagingActive = nil;
+   fontString.qtrQuestOriginalText = nil;
+   fontString.qtrQuestFontName = nil;
+   fontString.qtrQuestFontSize = nil;
+
+  fontName = fontName or QTR_Font1 or QTR_Font2 or Original_Font2;
+  fontSize = fontSize or 13;
+  fontString:SetFont(fontName, fontSize);
+  local wrapWidth = QTR_GetExternalGossipBodyWrapWidth(fontString);
+  fontString:SetWidth(wrapWidth);
+
+  if (translatedText and AS_ContainsArabic and AS_ContainsArabic(translatedText)) then
+     fontString:SetJustifyH("RIGHT");
+     local shapedText = QTR_PrepareShownGossipDisplayText(translatedText, wrapWidth - 12, fontSize, fontName);
+
+     -- Immersion's TextMixin replays newline-delimited segments and its own
+     -- sequencing can invert the visual top-to-bottom order for already-shaped
+     -- Arabic gossip. Write directly to the underlying font string instead.
+     if (fontString.PauseTimer) then
+        fontString:PauseTimer();
+     end
+     if (fontString.OnFinished) then
+        fontString:OnFinished();
+     end
+     fontString.numTexts = nil;
+     fontString.timeToFinish = nil;
+     fontString.timeStarted = nil;
+
+     local rawSetText = nil;
+     local metaTable = getmetatable(fontString);
+     if (metaTable and metaTable.__index and metaTable.__index.SetText) then
+        rawSetText = metaTable.__index.SetText;
+     end
+
+     if (rawSetText) then
+        rawSetText(fontString, shapedText);
+     else
+        fontString:SetText(shapedText);
+     end
+     fontString.storedText = shapedText;
+  else
+     fontString:SetJustifyH("LEFT");
+     local rawSetText = nil;
+     local metaTable = getmetatable(fontString);
+     if (metaTable and metaTable.__index and metaTable.__index.SetText) then
+        rawSetText = metaTable.__index.SetText;
+     end
+     if (fontString.PauseTimer) then
+        fontString:PauseTimer();
+     end
+     if (fontString.OnFinished) then
+        fontString:OnFinished();
+     end
+     if (rawSetText) then
+        rawSetText(fontString, translatedText or "");
+     else
+        fontString:SetText(translatedText or "");
+     end
+     fontString.storedText = translatedText or "";
+  end
+
+  if (not skipRetry and QTR_wait and wrapWidth <= 220) then
+     QTR_wait(0, function(targetFontString, targetText, targetFontName, targetFontSize)
+        if (targetFontString and targetFontString.IsShown and targetFontString:IsShown()) then
+           QTR_SetExternalGossipBodyText(targetFontString, targetText, targetFontName, targetFontSize, true);
+        end
+     end, fontString, translatedText, fontName, fontSize);
+  end
+end
+
+
+local function QTR_GetExternalRawSetText(fontString)
+  local metaTable = getmetatable(fontString);
+  if (metaTable and metaTable.__index and metaTable.__index.SetText) then
+     return metaTable.__index.SetText;
+  end
+  return nil;
+end
+
+
+local function QTR_NormalizeExternalQuestSourceText(text)
+  local normalizedText = text or "";
+  normalizedText = string.gsub(normalizedText, "\r\n", "\n");
+  normalizedText = string.gsub(normalizedText, "\r", "\n");
+  normalizedText = string.gsub(normalizedText, "\n[ \t]+", "\n");
+  normalizedText = string.gsub(normalizedText, "[ \t]+\n", "\n");
+  normalizedText = string.gsub(normalizedText, "\n\n\n+", "\n\n");
+  return normalizedText;
+end
+
+
+local function QTR_PrepareExternalQuestPageText(pageText, wrapWidth, fontName, fontSize)
+  local displayText = pageText or "";
+  local useArabicLayout = false;
+  if (displayText ~= "" and AS_ContainsArabic and AS_ContainsArabic(displayText)) then
+     useArabicLayout = true;
+     displayText = QTR_PrepareWrappedArabicText(displayText, wrapWidth - 12, fontName, fontSize);
+  end
+  return displayText, useArabicLayout;
+end
+
+
+local function QTR_MeasureExternalQuestPage(fontString, rawSetText, pageText, fontName, fontSize, wrapWidth)
+  local displayText, useArabicLayout = QTR_PrepareExternalQuestPageText(pageText, wrapWidth, fontName, fontSize);
+  fontString:SetFont(fontName, fontSize);
+  fontString:SetWidth(wrapWidth);
+  fontString:SetJustifyH(useArabicLayout and "RIGHT" or "LEFT");
+  if (rawSetText) then
+     rawSetText(fontString, displayText);
+  else
+     fontString:SetText(displayText);
+  end
+  return displayText, (fontString.GetStringHeight and fontString:GetStringHeight()) or 0, useArabicLayout;
+end
+
+
+local QTR_ImmersionQuestPageCache = {};
+
+
+local function QTR_CopyArray(sourceArray)
+  local copiedArray = {};
+  if (type(sourceArray) ~= "table") then
+     return copiedArray;
+  end
+
+  for index, value in ipairs(sourceArray) do
+     copiedArray[index] = value;
+  end
+
+  return copiedArray;
+end
+
+
+local function QTR_GetExternalQuestDisplayLineHeight(fontString, fontName, fontSize, wrapWidth, useArabicLayout)
+  local rawSetText = QTR_GetExternalRawSetText(fontString);
+  local sampleText = useArabicLayout and "ا" or "Ag";
+
+  fontString:SetFont(fontName, fontSize);
+  fontString:SetWidth(wrapWidth);
+  fontString:SetJustifyH(useArabicLayout and "RIGHT" or "LEFT");
+
+  if (rawSetText) then
+     rawSetText(fontString, sampleText);
+  else
+     fontString:SetText(sampleText);
+  end
+
+  local lineHeight = (fontString.GetStringHeight and fontString:GetStringHeight()) or 0;
+  if (not lineHeight or lineHeight <= 0) then
+     lineHeight = (fontSize or 13) + 6;
+  end
+
+  return lineHeight;
+end
+
+
+local function QTR_SplitExternalQuestDisplayPages(displayText, maxLinesPerPage)
+  if (type(displayText) ~= "string" or displayText == "") then
+     return { "" };
+  end
+
+  local pages = {};
+  local lines = {};
+  local hasTrailingBreak = string.sub(displayText, -1) == "\n";
+
+  for line in string.gmatch(displayText .. "\n", "(.-)\n") do
+     table.insert(lines, line);
+  end
+
+  if (not hasTrailingBreak and #lines > 0 and lines[#lines] == "") then
+     table.remove(lines, #lines);
+  end
+
+  if (#lines == 0) then
+     return { displayText };
+  end
+
+  local function ShouldStartNewPageAfterLine(lineText)
+     if (type(lineText) ~= "string" or lineText == "") then
+        return false;
+     end
+     return string.find(lineText, "%.%s*$") ~= nil;
+  end
+
+  local currentLines = {};
+  local function PushPage()
+     if (#currentLines > 0) then
+        table.insert(pages, table.concat(currentLines, "\n"));
+        currentLines = {};
+     end
+  end
+
+  for _, line in ipairs(lines) do
+     table.insert(currentLines, line);
+     if (ShouldStartNewPageAfterLine(line) or #currentLines >= maxLinesPerPage) then
+        PushPage();
+     end
+  end
+
+  PushPage();
+
+  if (#pages == 0) then
+     pages[1] = displayText;
+  end
+
+  return pages;
+end
+
+
+local function QTR_TrimExternalQuestSourceChunk(text)
+  local trimmedText = text or "";
+  trimmedText = string.gsub(trimmedText, "^%s+", "");
+  trimmedText = string.gsub(trimmedText, "%s+$", "");
+  return trimmedText;
+end
+
+
+local function QTR_SplitExternalQuestSourcePages(sourceText)
+  if (type(sourceText) ~= "string" or sourceText == "") then
+     return { "" };
+  end
+
+  local pages = {};
+  local currentChunk = "";
+  local textLength = string.len(sourceText);
+  local index = 1;
+
+  local function PushChunk()
+     local trimmedChunk = QTR_TrimExternalQuestSourceChunk(currentChunk);
+     if (trimmedChunk ~= "") then
+        table.insert(pages, trimmedChunk);
+     end
+     currentChunk = "";
+  end
+
+  while (index <= textLength) do
+     local currentChar = string.sub(sourceText, index, index);
+     currentChunk = currentChunk .. currentChar;
+
+     if (currentChar == ".") then
+        PushChunk();
+        while (index < textLength) do
+           local nextChar = string.sub(sourceText, index + 1, index + 1);
+           if (nextChar == " " or nextChar == "\t" or nextChar == "\r" or nextChar == "\n") then
+              index = index + 1;
+           else
+              break;
+           end
+        end
+     elseif (currentChar == "\n" and index < textLength and string.sub(sourceText, index + 1, index + 1) == "\n") then
+        PushChunk();
+        while (index < textLength and string.sub(sourceText, index + 1, index + 1) == "\n") do
+           index = index + 1;
+        end
+     end
+
+     index = index + 1;
+  end
+
+  PushChunk();
+
+  if (#pages == 0) then
+     pages[1] = sourceText;
+  end
+
+  return pages;
+end
+
+
+local function QTR_BuildExternalQuestBodyPages(fontString, translatedText, fontName, fontSize, wrapWidth, maxHeight)
+  local normalizedText = QTR_NormalizeExternalQuestSourceText(translatedText);
+  if (normalizedText == "") then
+     return { "" }, { "" }, { 0 }, false;
+  end
+
+  local cacheKey = table.concat({normalizedText, tostring(wrapWidth), tostring(fontName), tostring(fontSize), tostring(maxHeight)}, "\31");
+  local cachedPages = QTR_ImmersionQuestPageCache[cacheKey];
+  if (cachedPages) then
+     return QTR_CopyArray(cachedPages.pageSources), QTR_CopyArray(cachedPages.displayPages), QTR_CopyArray(cachedPages.timers), cachedPages.useArabicLayout, cachedPages.totalTime;
+  end
+
+  local sourcePages = QTR_SplitExternalQuestSourcePages(normalizedText);
+  local useArabicLayout = (AS_ContainsArabic and AS_ContainsArabic(normalizedText)) and true or false;
+  local lineHeight = QTR_GetExternalQuestDisplayLineHeight(fontString, fontName, fontSize, wrapWidth, useArabicLayout);
+  local maxLinesPerPage = math.max(2, math.floor((maxHeight or 0) / math.max(lineHeight, 1)));
+  local pageSources = {};
+  local displayPages = {};
+  local timers = {};
+  local totalTime = 0;
+
+  for _, sourcePage in ipairs(sourcePages) do
+     local displayPageText, pageUsesArabic = QTR_PrepareExternalQuestPageText(sourcePage, wrapWidth, fontName, fontSize);
+     useArabicLayout = useArabicLayout or pageUsesArabic;
+
+     local splitDisplayPages = QTR_SplitExternalQuestDisplayPages(displayPageText, maxLinesPerPage);
+     for _, splitDisplayPage in ipairs(splitDisplayPages) do
+        table.insert(pageSources, splitDisplayPage);
+        table.insert(displayPages, splitDisplayPage);
+
+        local pageTime = (fontString.CalculateLineTime and fontString:CalculateLineTime(string.len(splitDisplayPage))) or 0;
+        table.insert(timers, pageTime);
+        totalTime = totalTime + pageTime;
+     end
+  end
+
+  QTR_ImmersionQuestPageCache[cacheKey] = {
+     pageSources = QTR_CopyArray(pageSources),
+     displayPages = QTR_CopyArray(displayPages),
+     timers = QTR_CopyArray(timers),
+     useArabicLayout = useArabicLayout,
+     totalTime = totalTime,
+  };
+
+  return pageSources, displayPages, timers, useArabicLayout, totalTime;
+end
+
+
+local function QTR_GetExternalQuestBodyPageHeight(fontString)
+  if (not fontString or not fontString.GetParent) then
+     return 110;
+  end
+
+   local pageHeightScale = 0.52;
+
+  local textFrame = fontString:GetParent();
+  local availableHeight = 0;
+
+  if (textFrame and textFrame.GetHeight) then
+     availableHeight = textFrame:GetHeight() or 0;
+  end
+
+  local talkBox = textFrame and textFrame.GetParent and textFrame:GetParent();
+  local nameHeight = 0;
+  if (talkBox and talkBox.NameFrame and talkBox.NameFrame.Name and talkBox.NameFrame.Name.GetStringHeight) then
+     nameHeight = talkBox.NameFrame.Name:GetStringHeight() or 0;
+  end
+
+  if (availableHeight and availableHeight > 0) then
+     availableHeight = math.max(72, math.floor((availableHeight - nameHeight - 30) * pageHeightScale));
+  end
+
+  if (availableHeight and availableHeight > 60) then
+     return availableHeight;
+  end
+
+  if (talkBox and talkBox.GetHeight) then
+     local talkBoxHeight = talkBox:GetHeight() or 0;
+     if (talkBoxHeight and talkBoxHeight > 0) then
+        availableHeight = math.max(72, math.floor((talkBoxHeight - nameHeight - 42) * pageHeightScale));
+        if (availableHeight and availableHeight > 60) then
+           return availableHeight;
+        end
+     end
+  end
+
+  return 110;
+end
+
+
+local function QTR_SetExternalQuestBodyText(fontString, translatedText, fontName, fontSize)
+  if (not fontString) then
+     return;
+  end
+
+  fontName = fontName or QTR_Font1 or QTR_Font2 or Original_Font2;
+  fontSize = fontSize or 13;
+  fontString:SetFont(fontName, fontSize);
+
+  local wrapWidth = QTR_GetExternalGossipBodyWrapWidth(fontString);
+  fontString:SetWidth(wrapWidth);
+
+  local maxHeight = QTR_GetExternalQuestBodyPageHeight(fontString);
+
+  if (fontString.PauseTimer) then
+     fontString:PauseTimer();
+  end
+  if (fontString.OnFinished) then
+     fontString:OnFinished();
+  end
+  fontString.numTexts = nil;
+  fontString.timeToFinish = nil;
+  fontString.timeStarted = nil;
+
+  if (not fontString.qtrOriginalRepeatTexts and fontString.RepeatTexts) then
+     fontString.qtrOriginalRepeatTexts = fontString.RepeatTexts;
+     fontString.RepeatTexts = function(self)
+        if (self.qtrQuestPagingActive and self.qtrQuestOriginalText and self.qtrQuestOriginalText ~= "") then
+           QTR_SetExternalQuestBodyText(self, self.qtrQuestOriginalText, self.qtrQuestFontName, self.qtrQuestFontSize);
+           return;
+        end
+        if (self.qtrOriginalRepeatTexts) then
+           self:qtrOriginalRepeatTexts();
+        end
+     end;
+  end
+
+  fontString.qtrQuestPagingActive = true;
+  fontString.qtrQuestOriginalText = translatedText or "";
+  fontString.qtrQuestFontName = fontName;
+  fontString.qtrQuestFontSize = fontSize;
+
+  local pageSources, displayPages, timers, useArabicLayout, totalTime = QTR_BuildExternalQuestBodyPages(fontString, translatedText or "", fontName, fontSize, wrapWidth, maxHeight);
+  fontString:SetJustifyH(useArabicLayout and "RIGHT" or "LEFT");
+  fontString.storedText = translatedText or "";
+
+  if (displayPages and #displayPages > 1 and fontString.QueueTexts and fontString.SetToCurrentLine) then
+     fontString.numTexts = #displayPages;
+     fontString.timeToFinish = totalTime;
+     fontString.timeStarted = GetTime and GetTime() or nil;
+     fontString:QueueTexts(displayPages, timers);
+     fontString:SetToCurrentLine();
+  else
+     local rawSetText = QTR_GetExternalRawSetText(fontString);
+     local displayText = (displayPages and displayPages[1]) or "";
+     fontString:SetJustifyH(useArabicLayout and "RIGHT" or "LEFT");
+     if (rawSetText) then
+        rawSetText(fontString, displayText);
+     else
+        fontString:SetText(displayText);
+     end
+  end
+
+  local textFrame = fontString.GetParent and fontString:GetParent();
+  if (textFrame and textFrame.SpeechProgress) then
+     if (displayPages and #displayPages > 1) then
+        textFrame.SpeechProgress:Show();
+     else
+        textFrame.SpeechProgress:Hide();
+     end
+  end
+
+  local talkBox = textFrame and textFrame.GetParent and textFrame:GetParent();
+  if (talkBox and talkBox.ProgressionBar) then
+     if (displayPages and #displayPages > 1 and QTR_ImmersionHooked and talkBox.ProgressionBar.Show) then
+        talkBox.ProgressionBar:Show();
+     else
+        talkBox.ProgressionBar:Hide();
+     end
+  end
+end
+
+
+function QTR_GetImmersionTalkingHeadContent(frame, eventName, fallbackTitle, fallbackBody)
+  local originalTitle = fallbackTitle or "";
+  local originalBody = fallbackBody or "";
+
+  if (eventName == "QUEST_GREETING") then
+     originalTitle = (type(UnitName) == "function" and (UnitName("questnpc") or UnitName("npc"))) or originalTitle;
+     originalBody = (type(GetGreetingText) == "function" and GetGreetingText()) or originalBody;
+  elseif (eventName == "GOSSIP_SHOW") then
+     originalTitle = (type(UnitName) == "function" and UnitName("npc")) or originalTitle;
+     originalBody = (type(GetGossipText) == "function" and GetGossipText()) or originalBody;
+  elseif (eventName == "QUEST_DETAIL") then
+     originalTitle = (type(GetTitleText) == "function" and GetTitleText()) or originalTitle;
+     originalBody = (type(GetQuestText) == "function" and GetQuestText()) or originalBody;
+  elseif (eventName == "QUEST_PROGRESS") then
+     originalTitle = (type(GetTitleText) == "function" and GetTitleText()) or originalTitle;
+     originalBody = (type(GetProgressText) == "function" and GetProgressText()) or originalBody;
+  elseif (eventName == "QUEST_COMPLETE") then
+     originalTitle = (type(GetTitleText) == "function" and GetTitleText()) or originalTitle;
+     originalBody = (type(GetRewardText) == "function" and GetRewardText()) or originalBody;
+  end
+
+  return originalTitle or "", originalBody or "";
+end
+
+
+function QTR_RestoreImmersionTalkingHead(frame, eventName, fallbackTitle, fallbackBody)
+  if (not frame or not frame.TalkBox) then
+     return;
+  end
+
+  local originalTitle, originalBody = QTR_GetImmersionTalkingHeadContent(frame, eventName, fallbackTitle, fallbackBody);
+
+  local titleFontString = frame.TalkBox.NameFrame and frame.TalkBox.NameFrame.Name;
+  if (titleFontString) then
+     QTR_RestoreExternalFontState(titleFontString, QTR_ImmersionFontState);
+     titleFontString:SetText(originalTitle or "");
+  end
+
+  local bodyFontString = frame.TalkBox.TextFrame and frame.TalkBox.TextFrame.Text;
+  if (bodyFontString) then
+     QTR_RestoreExternalFontState(bodyFontString, QTR_ImmersionFontState);
+     bodyFontString.qtrQuestPagingActive = nil;
+     bodyFontString.qtrQuestOriginalText = nil;
+     bodyFontString.qtrQuestFontName = nil;
+     bodyFontString.qtrQuestFontSize = nil;
+     if (bodyFontString.PauseTimer) then
+        bodyFontString:PauseTimer();
+     end
+     if (bodyFontString.OnFinished) then
+        bodyFontString:OnFinished();
+     end
+     bodyFontString:SetText(originalBody or "");
+  end
+end
+
+
+function QTR_RestoreImmersionQuestContent(frame)
+  local talkBox = frame and frame.TalkBox;
+  local elements = talkBox and talkBox.Elements;
+  if (not elements) then
+     return;
+  end
+
+  local content = elements.Content;
+  if (content and content.IsShown and content:IsShown()) then
+     if (content.ObjectivesHeader and content.ObjectivesHeader.IsShown and content.ObjectivesHeader:IsShown()) then
+        QTR_RestoreExternalFontState(content.ObjectivesHeader, QTR_ImmersionFontState);
+        content.ObjectivesHeader:SetText(QUEST_OBJECTIVES or (content.ObjectivesHeader:GetText() or ""));
+     end
+
+     if (content.ObjectivesText and content.ObjectivesText.IsShown and content.ObjectivesText:IsShown()) then
+        QTR_RestoreExternalFontState(content.ObjectivesText, QTR_ImmersionFontState);
+        content.ObjectivesText:SetText((type(GetObjectiveText) == "function" and GetObjectiveText()) or (content.ObjectivesText:GetText() or ""));
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.Header and content.RewardsFrame.Header.IsShown and content.RewardsFrame.Header:IsShown()) then
+        QTR_RestoreExternalFontState(content.RewardsFrame.Header, QTR_ImmersionFontState);
+        content.RewardsFrame.Header:SetText(QUEST_REWARDS or (content.RewardsFrame.Header:GetText() or ""));
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.ItemChooseText and content.RewardsFrame.ItemChooseText.IsShown and content.RewardsFrame.ItemChooseText:IsShown()) then
+        local chooseCount = (type(GetNumQuestChoices) == "function" and GetNumQuestChoices()) or 0;
+        local chooseText = REWARD_CHOICES or (content.RewardsFrame.ItemChooseText:GetText() or "");
+        if (chooseCount == 1) then
+           chooseText = REWARD_ITEMS_ONLY or chooseText;
+        elseif (elements.chooseItems) then
+           chooseText = REWARD_CHOOSE or chooseText;
+        end
+
+        QTR_RestoreExternalFontState(content.RewardsFrame.ItemChooseText, QTR_ImmersionFontState);
+        content.RewardsFrame.ItemChooseText:SetText(chooseText);
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.ItemReceiveText and content.RewardsFrame.ItemReceiveText.IsShown and content.RewardsFrame.ItemReceiveText:IsShown()) then
+        local chooseCount = (type(GetNumQuestChoices) == "function" and GetNumQuestChoices()) or 0;
+        local hasRewardExtras = (chooseCount > 0) or (type(GetNumRewardSpells) == "function" and (GetNumRewardSpells() or 0) > 0) or (content.RewardsFrame.PlayerTitleText and content.RewardsFrame.PlayerTitleText.IsShown and content.RewardsFrame.PlayerTitleText:IsShown());
+        local receiveText = hasRewardExtras and (REWARD_ITEMS or (content.RewardsFrame.ItemReceiveText:GetText() or "")) or (REWARD_ITEMS_ONLY or (content.RewardsFrame.ItemReceiveText:GetText() or ""));
+
+        QTR_RestoreExternalFontState(content.RewardsFrame.ItemReceiveText, QTR_ImmersionFontState);
+        content.RewardsFrame.ItemReceiveText:SetText(receiveText);
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.XPFrame and content.RewardsFrame.XPFrame.ReceiveText and content.RewardsFrame.XPFrame.ReceiveText.IsShown and content.RewardsFrame.XPFrame.ReceiveText:IsShown()) then
+        QTR_RestoreExternalFontState(content.RewardsFrame.XPFrame.ReceiveText, QTR_ImmersionFontState);
+        content.RewardsFrame.XPFrame.ReceiveText:SetText(EXPERIENCE_COLON or (content.RewardsFrame.XPFrame.ReceiveText:GetText() or ""));
+     end
+  end
+
+  local progress = elements.Progress;
+  if (progress and progress.IsShown and progress:IsShown()) then
+     if (progress.ReqText and progress.ReqText.IsShown and progress.ReqText:IsShown()) then
+        QTR_RestoreExternalFontState(progress.ReqText, QTR_ImmersionFontState);
+        progress.ReqText:SetText(TURN_IN_ITEMS or (progress.ReqText:GetText() or ""));
+     end
+
+     if (progress.MoneyText and progress.MoneyText.IsShown and progress.MoneyText:IsShown()) then
+        QTR_RestoreExternalFontState(progress.MoneyText, QTR_ImmersionFontState);
+        progress.MoneyText:SetText(REQUIRED_MONEY or (progress.MoneyText:GetText() or ""));
+     end
+  end
+
+  QTR_RefreshImmersionQuestLayout(frame);
+end
+
+
+function QTR_UpdateImmersionOptionButtons(buttonsFrame)
+  if (not buttonsFrame or not buttonsFrame.Buttons) then
+     return;
+  end
+
+  local totalHeight = 0;
+  for _, button in pairs(buttonsFrame.Buttons) do
+     if (button and button:IsShown() and button.Label) then
+        local label = button.Label;
+        local currentText = label:GetText() or "";
+        if (currentText ~= "" and (not button.qtrOriginalDisplayText or button.qtrOriginalDisplayText == "" or not (AS_ContainsArabic and AS_ContainsArabic(currentText)))) then
+           button.qtrOriginalDisplayText = currentText;
+        end
+
+        local originalText = button.qtrOriginalDisplayText or currentText;
+        local fontState = QTR_GetExternalFontState(label, QTR_ImmersionFontState);
+        local fontName = QTR_Font2 or (fontState and fontState.font) or Original_Font2;
+        local fontSize = (fontState and fontState.size) or 13;
+        local translatedText, translatedKind = nil, nil;
+        if (QTR_PS and QTR_PS["active"] == "1") then
+           translatedText, translatedKind = QTR_GetExternalChoiceTranslatedText(originalText, label:GetWidth(), fontName, fontSize);
+        end
+
+        if (translatedText and translatedText ~= "") then
+           button:SetText(translatedText);
+           label:SetFont(fontName, fontSize, fontState and fontState.flags or nil);
+           if (label.SetJustifyH) then
+              if (translatedKind == "gossip" and AS_ContainsArabic and AS_ContainsArabic(translatedText)) then
+                 label:SetJustifyH("RIGHT");
+              else
+                 label:SetJustifyH(fontState and fontState.justify or "LEFT");
+              end
+           end
+        else
+           button:SetText(originalText or "");
+           QTR_RestoreExternalFontState(label, QTR_ImmersionFontState);
+        end
+
+        local buttonHeight = max(64, (label.GetHeight and label:GetHeight() or 0) + 28);
+        button:SetHeight(buttonHeight);
+        totalHeight = totalHeight + buttonHeight;
+     end
+  end
+
+  if (totalHeight > 0 and buttonsFrame.AdjustHeight) then
+     buttonsFrame:AdjustHeight(totalHeight);
+  end
+end
+
+
+function QTR_ApplyImmersionQuestTalkingHead(frame, titleText, sourceText)
+  if (not frame or not frame.TalkBox or not QTR_PS or QTR_PS["active"] ~= "1") then
+     return false;
+  end
+
+  local questId = QTR_SelectQuestIdFromTitle(titleText or "");
+  if (not questId) then
+     return false;
+  end
+
+  frame.QTR_LastExternalQuestTitle = titleText;
+
+  local titleFontString = frame.TalkBox.NameFrame and frame.TalkBox.NameFrame.Name;
+  if (titleFontString) then
+     QTR_GetExternalFontState(titleFontString, QTR_ImmersionFontState);
+     if (QTR_PS["transtitle"] == "1") then
+        local translatedTitle = QTR_GetTranslatedQuestTitleById(questId) or QTR_GetQuestTitleTranslation(titleText or (titleFontString:GetText() or ""));
+        if (translatedTitle and translatedTitle ~= "") then
+           local _, titleSize = titleFontString:GetFont();
+           QTR_SetShapedTitleText(titleFontString, translatedTitle, QTR_Font1 or QTR_Font2 or Original_Font2, titleSize or 22, titleFontString:GetWidth());
+        else
+           QTR_RestoreExternalFontState(titleFontString, QTR_ImmersionFontState);
+           titleFontString:SetText(titleText or "");
+        end
+     else
+        QTR_RestoreExternalFontState(titleFontString, QTR_ImmersionFontState);
+        titleFontString:SetText(titleText or "");
+     end
+  end
+
+  local bodyFontString = frame.TalkBox.TextFrame and frame.TalkBox.TextFrame.Text;
+  if (bodyFontString) then
+     QTR_GetExternalFontState(bodyFontString, QTR_ImmersionFontState);
+     local translatedBody = QTR_GetExternalQuestTextTranslationFromSource(titleText or "", sourceText or "");
+     if (translatedBody and translatedBody ~= "") then
+        local _, bodySize = bodyFontString:GetFont();
+        QTR_SetExternalQuestBodyText(bodyFontString, translatedBody, QTR_Font1 or QTR_Font2 or Original_Font2, bodySize or 16);
+     else
+        QTR_RestoreImmersionTalkingHead(frame, frame.lastEvent or (frame.TalkBox and frame.TalkBox.lastEvent), titleText, sourceText);
+     end
+  end
+
+  return true;
+end
+
+
+function QTR_RefreshImmersionQuestLayout(frame)
+  local talkBox = frame and frame.TalkBox;
+  local elements = talkBox and talkBox.Elements;
+  if (not talkBox or not elements or not elements.IsShown or not elements:IsShown()) then
+     return;
+  end
+
+  if (elements.UpdateBoundaries) then
+     elements:UpdateBoundaries();
+  end
+
+  if (talkBox.SetExtraOffset and elements.GetHeight) then
+     local elementsHeight = elements:GetHeight() or 0;
+     if (elementsHeight > 0) then
+        local elementScale = (elements.GetScale and elements:GetScale()) or 1;
+        local extraOffset = (elementsHeight + 32) * elementScale;
+        if (talkBox.qtrLastExtraOffset ~= extraOffset) then
+           talkBox.qtrLastExtraOffset = extraOffset;
+           talkBox:SetExtraOffset(extraOffset);
+        end
+     end
+  end
+end
+
+
+function QTR_UpdateImmersionQuestContent(frame, titleText)
+  local talkBox = frame and frame.TalkBox;
+  local elements = talkBox and talkBox.Elements;
+  if (not elements) then
+     return;
+  end
+
+  if (not QTR_PS or QTR_PS["active"] ~= "1") then
+     QTR_RestoreImmersionQuestContent(frame);
+     return;
+  end
+
+  local content = elements.Content;
+  if (content and content.IsShown and content:IsShown()) then
+     local contentWidth = 507;
+     if (content.ObjectivesText and content.ObjectivesText.GetWidth) then
+        local measuredWidth = content.ObjectivesText:GetWidth();
+        if (measuredWidth and measuredWidth > 0) then
+           contentWidth = measuredWidth;
+        end
+     elseif (content.GetWidth) then
+        local measuredWidth = content:GetWidth();
+        if (measuredWidth and measuredWidth > 0) then
+           contentWidth = measuredWidth - 63;
+        end
+     end
+
+     if (content.ObjectivesHeader and content.ObjectivesHeader.IsShown and content.ObjectivesHeader:IsShown() and QTR_Messages and QTR_Messages.objectives) then
+        local _, headerSize = content.ObjectivesHeader:GetFont();
+        QTR_GetExternalFontState(content.ObjectivesHeader, QTR_ImmersionFontState);
+        content.ObjectivesHeader:SetWidth(contentWidth);
+        QTR_SetShapedTitleText(content.ObjectivesHeader, QTR_Messages.objectives, QTR_Font1 or QTR_Font2 or Original_Font2, headerSize or 18, contentWidth);
+     end
+
+     local objectiveText = QTR_GetExternalQuestObjectivesTranslation(titleText);
+     if (objectiveText and content.ObjectivesText and content.ObjectivesText.IsShown and content.ObjectivesText:IsShown()) then
+        local _, objectiveSize = content.ObjectivesText:GetFont();
+        QTR_GetExternalFontState(content.ObjectivesText, QTR_ImmersionFontState);
+        content.ObjectivesText:SetWidth(contentWidth);
+        QTR_SetShapedTitleText(content.ObjectivesText, objectiveText, QTR_Font2 or QTR_Font1 or Original_Font2, objectiveSize or 13, contentWidth);
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.Header and content.RewardsFrame.Header.IsShown and content.RewardsFrame.Header:IsShown() and QTR_Messages and QTR_Messages.rewards) then
+        local _, rewardsSize = content.RewardsFrame.Header:GetFont();
+        QTR_GetExternalFontState(content.RewardsFrame.Header, QTR_ImmersionFontState);
+        content.RewardsFrame.Header:SetWidth(contentWidth);
+        QTR_SetShapedTitleText(content.RewardsFrame.Header, QTR_Messages.rewards, QTR_Font1 or QTR_Font2 or Original_Font2, rewardsSize or 18, contentWidth);
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.ItemChooseText and content.RewardsFrame.ItemChooseText.IsShown and content.RewardsFrame.ItemChooseText:IsShown() and QTR_Messages) then
+        local chooseCount = (type(GetNumQuestChoices) == "function" and GetNumQuestChoices()) or 0;
+        local chooseText = (chooseCount and chooseCount > 1) and QTR_Messages.itemchoose2 or QTR_Messages.itemchoose1;
+        local _, chooseSize = content.RewardsFrame.ItemChooseText:GetFont();
+        QTR_GetExternalFontState(content.RewardsFrame.ItemChooseText, QTR_ImmersionFontState);
+        QTR_SetShapedText(content.RewardsFrame.ItemChooseText, chooseText, QTR_Font2 or QTR_Font1 or Original_Font2, chooseSize or 13);
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.ItemReceiveText and content.RewardsFrame.ItemReceiveText.IsShown and content.RewardsFrame.ItemReceiveText:IsShown() and QTR_Messages) then
+        local chooseCount = (type(GetNumQuestChoices) == "function" and GetNumQuestChoices()) or 0;
+        local receiveText = (chooseCount and chooseCount > 1) and QTR_Messages.itemreceiv2 or QTR_Messages.itemreceiv1;
+        local _, receiveSize = content.RewardsFrame.ItemReceiveText:GetFont();
+        QTR_GetExternalFontState(content.RewardsFrame.ItemReceiveText, QTR_ImmersionFontState);
+        QTR_SetShapedText(content.RewardsFrame.ItemReceiveText, receiveText, QTR_Font2 or QTR_Font1 or Original_Font2, receiveSize or 13);
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.XPFrame and content.RewardsFrame.XPFrame.ReceiveText and content.RewardsFrame.XPFrame.ReceiveText.IsShown and content.RewardsFrame.XPFrame.ReceiveText:IsShown() and QTR_Messages and QTR_Messages.experience) then
+        local _, xpSize = content.RewardsFrame.XPFrame.ReceiveText:GetFont();
+        QTR_GetExternalFontState(content.RewardsFrame.XPFrame.ReceiveText, QTR_ImmersionFontState);
+        QTR_SetShapedText(content.RewardsFrame.XPFrame.ReceiveText, QTR_Messages.experience, QTR_Font2 or QTR_Font1 or Original_Font2, xpSize or 13);
+     end
+  end
+
+  local progress = elements.Progress;
+  if (progress and progress.IsShown and progress:IsShown()) then
+     if (progress.ReqText and progress.ReqText.IsShown and progress.ReqText:IsShown() and QTR_Messages and QTR_Messages.reqitems) then
+        local _, reqSize = progress.ReqText:GetFont();
+        local progressWidth = (progress.GetWidth and progress:GetWidth() and (progress:GetWidth() - 63)) or 507;
+        QTR_GetExternalFontState(progress.ReqText, QTR_ImmersionFontState);
+        progress.ReqText:SetWidth(progressWidth);
+        QTR_SetShapedTitleText(progress.ReqText, QTR_Messages.reqitems, QTR_Font1 or QTR_Font2 or Original_Font2, reqSize or 18, progressWidth);
+     end
+     if (progress.MoneyText and progress.MoneyText.IsShown and progress.MoneyText:IsShown() and QTR_Messages and QTR_Messages.reqmoney) then
+        local _, moneySize = progress.MoneyText:GetFont();
+        QTR_GetExternalFontState(progress.MoneyText, QTR_ImmersionFontState);
+        QTR_SetShapedText(progress.MoneyText, QTR_Messages.reqmoney, QTR_Font2 or QTR_Font1 or Original_Font2, moneySize or 13);
+     end
+  end
+
+  QTR_RefreshImmersionQuestLayout(frame);
+end
+
+
+function QTR_UpdateImmersionFrame(frame)
+  if (not frame or not frame.IsShown or not frame:IsShown() or not frame.TalkBox) then
+     return;
+  end
+
+  local eventName = frame.lastEvent or (frame.TalkBox and frame.TalkBox.lastEvent);
+  if (not eventName or eventName == "") then
+     return;
+  end
+
+  local titleText = nil;
+  if (type(GetTitleText) == "function") then
+     titleText = GetTitleText();
+  end
+  if ((not titleText or titleText == "") and frame.QTR_LastExternalQuestTitle and frame.QTR_LastExternalQuestTitle ~= "") then
+     titleText = frame.QTR_LastExternalQuestTitle;
+  end
+  if ((not titleText or titleText == "") and frame.IsAvailableQuestID and frame.IsAvailableQuestID ~= "") then
+     titleText = frame.IsAvailableQuestID;
+  end
+
+  if (not QTR_PS or QTR_PS["active"] ~= "1") then
+     QTR_RestoreImmersionTalkingHead(frame, eventName, titleText, nil);
+     QTR_RestoreImmersionQuestContent(frame);
+     return;
+  end
+
+  if (eventName == "QUEST_DETAIL" or eventName == "QUEST_PROGRESS" or eventName == "QUEST_COMPLETE") then
+     return;
+  end
+
+  local bodyFontString = frame.TalkBox.TextFrame and frame.TalkBox.TextFrame.Text;
+  if (bodyFontString) then
+     QTR_GetExternalFontState(bodyFontString, QTR_ImmersionFontState);
+     local translatedBody = nil;
+     if (eventName == "QUEST_GREETING") then
+        local greetingText = (type(GetGreetingText) == "function" and GetGreetingText()) or bodyFontString:GetText() or "";
+        translatedBody = QTR_GetExternalGossipBodyTranslation(greetingText, true);
+     elseif (eventName == "GOSSIP_SHOW") then
+        local gossipText = (type(GetGossipText) == "function" and GetGossipText()) or bodyFontString:GetText() or "";
+        translatedBody = QTR_GetExternalGossipBodyTranslation(gossipText, true);
+     end
+
+     if (translatedBody and translatedBody ~= "") then
+        local _, bodySize = bodyFontString:GetFont();
+        QTR_SetExternalGossipBodyText(bodyFontString, translatedBody, QTR_Font1 or QTR_Font2 or Original_Font2, bodySize or 16);
+     elseif (eventName == "QUEST_GREETING" or eventName == "GOSSIP_SHOW") then
+        QTR_RestoreImmersionTalkingHead(frame, eventName, titleText, nil);
+     end
+  end
+
+  if (QTR_PS and QTR_PS["active"] == "1" and eventName ~= "QUEST_DETAIL" and eventName ~= "QUEST_PROGRESS" and eventName ~= "QUEST_COMPLETE") then
+     QTR_UpdateImmersionQuestContent(frame, titleText or "");
+  end
+end
+
+
+function QTR_TryHookImmersion()
+  if (QTR_ImmersionHooked or type(IsAddOnLoaded) ~= "function" or not IsAddOnLoaded("Immersion")) then
+     return QTR_ImmersionHooked;
+  end
+  if (not ImmersionFrame or type(ImmersionFrame.OnEvent) ~= "function" or not ImmersionFrame.TitleButtons or type(ImmersionFrame.TitleButtons.UpdateActive) ~= "function") then
+     return false;
+  end
+
+  QTR_ImmersionHooked = true;
+
+  hooksecurefunc(ImmersionFrame, "OnEvent", function(self)
+     QTR_UpdateImmersionFrame(self);
+  end);
+
+  hooksecurefunc(ImmersionFrame, "UpdateTalkingHead", function(self, titleText, text, npcType)
+     if (not self or not self.TalkBox or not self.TalkBox.TextFrame or not self.TalkBox.TextFrame.Text) then
+        return;
+     end
+
+     if (not QTR_PS or QTR_PS["active"] ~= "1") then
+        return;
+     end
+
+     local isGreetingText = false;
+     if (type(GetGreetingText) == "function") then
+        local currentGreetingText = GetGreetingText();
+        if (currentGreetingText and currentGreetingText ~= "" and currentGreetingText == (text or "")) then
+           isGreetingText = true;
+        end
+     end
+
+     if (npcType == "GossipGossip" or isGreetingText) then
+        local translatedBody = QTR_GetExternalGossipBodyTranslation(text or "", true);
+        if (translatedBody and translatedBody ~= "") then
+           local bodyFontString = self.TalkBox.TextFrame.Text;
+           local _, bodySize = bodyFontString:GetFont();
+           QTR_SetExternalGossipBodyText(bodyFontString, translatedBody, QTR_Font1 or QTR_Font2 or Original_Font2, bodySize or 16);
+        end
+        return;
+     end
+
+     QTR_ApplyImmersionQuestTalkingHead(self, titleText, text);
+  end);
+
+  hooksecurefunc(ImmersionFrame, "AddQuestInfo", function(self)
+     local titleText = (type(GetTitleText) == "function" and GetTitleText()) or self.QTR_LastExternalQuestTitle or self.IsAvailableQuestID or "";
+     QTR_UpdateImmersionQuestContent(self, titleText);
+  end);
+
+  if (ImmersionFrame.TalkBox and ImmersionFrame.TalkBox.Elements and type(ImmersionFrame.TalkBox.Elements.ShowProgress) == "function") then
+     hooksecurefunc(ImmersionFrame.TalkBox.Elements, "ShowProgress", function()
+        local titleText = (type(GetTitleText) == "function" and GetTitleText()) or ImmersionFrame.QTR_LastExternalQuestTitle or ImmersionFrame.IsAvailableQuestID or "";
+        QTR_UpdateImmersionQuestContent(ImmersionFrame, titleText);
+     end);
+  end;
+
+  hooksecurefunc(ImmersionFrame.TitleButtons, "UpdateActive", function(self)
+     QTR_UpdateImmersionOptionButtons(self);
+  end);
+
+   QTR_RefreshImmersionLiveView();
+  return true;
+end
+
+
+   function QTR_RefreshImmersionLiveView()
+     if (not QTR_TryHookImmersion() or not ImmersionFrame or not ImmersionFrame.IsShown or not ImmersionFrame:IsShown()) then
+        return;
+     end
+
+     local eventName = ImmersionFrame.lastEvent or (ImmersionFrame.TalkBox and ImmersionFrame.TalkBox.lastEvent);
+     local titleText = (type(GetTitleText) == "function" and GetTitleText()) or ImmersionFrame.QTR_LastExternalQuestTitle or ImmersionFrame.IsAvailableQuestID or "";
+
+     if (not QTR_PS or QTR_PS["active"] ~= "1") then
+        QTR_RestoreImmersionTalkingHead(ImmersionFrame, eventName, titleText, nil);
+        QTR_RestoreImmersionQuestContent(ImmersionFrame);
+     elseif (eventName == "QUEST_DETAIL" or eventName == "QUEST_PROGRESS" or eventName == "QUEST_COMPLETE") then
+        local _, sourceText = QTR_GetImmersionTalkingHeadContent(ImmersionFrame, eventName, titleText, nil);
+        QTR_ApplyImmersionQuestTalkingHead(ImmersionFrame, titleText, sourceText);
+        QTR_UpdateImmersionQuestContent(ImmersionFrame, titleText);
+     else
+        QTR_UpdateImmersionFrame(ImmersionFrame);
+     end
+
+     QTR_UpdateImmersionOptionButtons(ImmersionFrame.TitleButtons);
+   end
+
+
+function QTR_UpdateStorylineDialogButtons()
+  local function UpdateStorylineChoiceButton(button)
+     if (not button or not button.IsShown or not button:IsShown()) then
+        return 0;
+     end
+
+     local label = button.Text or button.text or (button.GetFontString and button:GetFontString());
+     if (not label or not label.GetText) then
+        return (button.GetHeight and button:GetHeight()) or 0;
+     end
+
+     local currentText = label:GetText() or "";
+     if (currentText ~= "" and (not button.qtrOriginalDisplayText or button.qtrOriginalDisplayText == "" or not (AS_ContainsArabic and AS_ContainsArabic(currentText)))) then
+        button.qtrOriginalDisplayText = currentText;
+     end
+
+     local originalText = button.qtrOriginalDisplayText or currentText;
+     local fontState = QTR_GetExternalFontState(label, QTR_StorylineFontState);
+     local fontName = QTR_Font2 or (fontState and fontState.font) or Original_Font2;
+     local fontSize = (fontState and fontState.size) or 13;
+     local width = (label.GetWidth and label:GetWidth()) or (button.GetWidth and button:GetWidth()) or 0;
+     local translatedText, translatedKind = nil, nil;
+     if (QTR_PS and QTR_PS["active"] == "1") then
+        translatedText, translatedKind = QTR_GetExternalChoiceTranslatedText(originalText, width, fontName, fontSize);
+     end
+
+     if (translatedText and translatedText ~= "") then
+        if (type(button.SetText) == "function") then
+           button:SetText(translatedText);
+        else
+           label:SetText(translatedText);
+        end
+        label:SetFont(fontName, fontSize, fontState and fontState.flags or nil);
+        if (label.SetJustifyH) then
+           if (translatedKind == "gossip" and AS_ContainsArabic and AS_ContainsArabic(translatedText)) then
+              label:SetJustifyH("RIGHT");
+           else
+              label:SetJustifyH(fontState and fontState.justify or "LEFT");
+           end
+        end
+     else
+        if (type(button.SetText) == "function") then
+           button:SetText(originalText or "");
+        else
+           label:SetText(originalText or "");
+        end
+        QTR_RestoreExternalFontState(label, QTR_StorylineFontState);
+     end
+
+     if (type(button.RefreshHeight) == "function") then
+        button:RefreshHeight();
+     end
+
+     return (button.GetHeight and button:GetHeight()) or 0;
+  end
+
+  for _, button in ipairs({ Storyline_NPCFrameChatOption1, Storyline_NPCFrameChatOption2, Storyline_NPCFrameChatOption3 }) do
+     UpdateStorylineChoiceButton(button);
+  end
+
+  if (Storyline_NPCFrameGossipChoices and Storyline_NPCFrameGossipChoices.IsShown and Storyline_NPCFrameGossipChoices:IsShown()) then
+     local totalHeight = 40;
+     for _, button in ipairs({ Storyline_NPCFrameGossipChoices:GetChildren() }) do
+        if (button and button.IsShown and button:IsShown()) then
+           totalHeight = totalHeight + UpdateStorylineChoiceButton(button) + 10;
+        end
+     end
+     if (totalHeight > 40) then
+        Storyline_NPCFrameGossipChoices:SetHeight(totalHeight);
+     end
+  end
+end
+
+
+function QTR_GetStorylineEventName()
+  if (Storyline_NPCFrameChat and Storyline_NPCFrameChat.event and Storyline_NPCFrameChat.event ~= "") then
+     return Storyline_NPCFrameChat.event;
+  end
+
+  return nil;
+end
+
+
+function QTR_GetStorylineTitleFontString()
+  if (Storyline_NPCFrame and Storyline_NPCFrame.Banner and Storyline_NPCFrame.Banner.Title) then
+     return Storyline_NPCFrame.Banner.Title;
+  end
+
+  return Storyline_NPCFrameTitle;
+end
+
+
+function QTR_GetStorylineQuestTitle()
+  local questTitle = (type(GetTitleText) == "function" and GetTitleText()) or nil;
+  if ((not questTitle or questTitle == "") and Storyline_NPCFrameTitle and Storyline_NPCFrameTitle.GetText) then
+     questTitle = Storyline_NPCFrameTitle:GetText();
+  end
+
+  return questTitle or "";
+end
+
+
+function QTR_GetStorylineBodySourceText(eventName)
+  if (eventName == "QUEST_DETAIL") then
+     return (type(GetQuestText) == "function" and GetQuestText()) or "";
+  elseif (eventName == "QUEST_PROGRESS") then
+     return (type(GetProgressText) == "function" and GetProgressText()) or "";
+  elseif (eventName == "QUEST_COMPLETE") then
+     return (type(GetRewardText) == "function" and GetRewardText()) or "";
+  elseif (eventName == "QUEST_GREETING") then
+     return (type(GetGreetingText) == "function" and GetGreetingText()) or "";
+  elseif (eventName == "GOSSIP_SHOW") then
+     return (type(GetGossipText) == "function" and GetGossipText()) or "";
+  end
+
+  return "";
+end
+
+
+function QTR_GetStorylineQuestLogObjectives(questTitle)
+  if (not questTitle or questTitle == "" or type(GetNumQuestLogEntries) ~= "function" or type(GetQuestLogTitle) ~= "function" or type(SelectQuestLogEntry) ~= "function" or type(GetQuestLogQuestText) ~= "function") then
+     return "";
+  end
+
+  local currentSelection = (type(GetQuestLogSelection) == "function" and GetQuestLogSelection()) or nil;
+  local objectivesText = "";
+  local questEntries = GetNumQuestLogEntries() or 0;
+
+  for questIndex = 1, questEntries do
+     local currentTitle, _, _, _, isHeader = GetQuestLogTitle(questIndex);
+     if (currentTitle == questTitle and not isHeader) then
+        SelectQuestLogEntry(questIndex);
+        local _, questObjectives = GetQuestLogQuestText();
+        objectivesText = questObjectives or "";
+        break;
+     end
+  end
+
+  if (currentSelection and currentSelection > 0) then
+     SelectQuestLogEntry(currentSelection);
+  end
+
+  return objectivesText;
+end
+
+
+function QTR_GetStorylineOriginalObjectivesText(eventName, questTitle)
+  if (eventName == "QUEST_DETAIL") then
+     return (type(GetObjectiveText) == "function" and GetObjectiveText()) or "";
+  end
+
+  if (eventName == "QUEST_PROGRESS") then
+     local objectivesText = QTR_GetStorylineQuestLogObjectives(questTitle);
+     if (objectivesText ~= "") then
+        if (type(IsQuestCompletable) == "function" and IsQuestCompletable()) then
+           objectivesText = "|TInterface\\RAIDFRAME\\ReadyCheck-Ready:15:15|t |cff00ff00" .. objectivesText;
+        else
+           objectivesText = "|TInterface\\RAIDFRAME\\ReadyCheck-NotReady:15:15|t |cffff0000" .. objectivesText;
+        end
+     end
+     return objectivesText;
+  end
+
+  return "";
+end
+
+
+function QTR_SplitStorylineTextPages(text)
+  local pages = QTR_SplitMultilineText(text);
+  local filteredPages = {};
+
+  for _, pageText in ipairs(pages) do
+     if (type(pageText) == "string" and string.find(pageText, "%S")) then
+        filteredPages[#filteredPages + 1] = pageText;
+     end
+  end
+
+  if (#filteredPages == 0) then
+     filteredPages[1] = text or "";
+  end
+
+  return filteredPages;
+end
+
+
+function QTR_PrepareStorylineDisplayPages(pages, width, fontName, fontSize)
+  local displayPages = {};
+
+  for index, pageText in ipairs(pages or {}) do
+     if (pageText and AS_ContainsArabic and AS_ContainsArabic(pageText)) then
+        displayPages[index] = QTR_PrepareWrappedArabicText(pageText, width, fontName, fontSize);
+     else
+        displayPages[index] = pageText or "";
+     end
+  end
+
+  if (#displayPages == 0) then
+     displayPages[1] = "";
+  end
+
+  return displayPages;
+end
+
+
+function QTR_RefreshStorylineFrameLayout()
+  if (Storyline_NPCFrameChat and Storyline_NPCFrameChatText and Storyline_NPCFrameChatNextText) then
+     local nameHeight = Storyline_NPCFrameChatName and Storyline_NPCFrameChatName:GetHeight() or 0;
+     if (issecretvalue and issecretvalue(nameHeight) and Storyline_Data and Storyline_Data.config and Storyline_Data.config["NPCName"]) then
+        nameHeight = Storyline_Data.config["NPCName"].Size;
+     end
+     Storyline_NPCFrameChat:SetHeight((Storyline_NPCFrameChatText:GetHeight() or 0) + nameHeight + (Storyline_NPCFrameChatNextText:GetHeight() or 0) + 50);
+  end
+end
+
+
+function QTR_RestoreStorylineFrame()
+  if (not Storyline_NPCFrame or not Storyline_NPCFrame.IsShown or not Storyline_NPCFrame:IsShown()) then
+     return;
+  end
+
+  local eventName = QTR_GetStorylineEventName();
+  local questTitle = QTR_GetStorylineQuestTitle();
+
+  local titleFontString = QTR_GetStorylineTitleFontString();
+  if (titleFontString) then
+     QTR_RestoreExternalFontState(titleFontString, QTR_StorylineFontState);
+     titleFontString:SetText(questTitle or "");
+  end
+
+  if (Storyline_NPCFrameChat and Storyline_NPCFrameChatText) then
+     local sourceText = QTR_GetStorylineBodySourceText(eventName);
+     local originalTexts = QTR_SplitStorylineTextPages(sourceText);
+
+     Storyline_NPCFrameChat.texts = originalTexts;
+
+     local textCount = #originalTexts;
+     local currentIndex = Storyline_NPCFrameChat.currentIndex or 1;
+     if (currentIndex < 1) then
+        currentIndex = 1;
+     end
+     if (textCount > 0 and currentIndex > textCount) then
+        currentIndex = textCount;
+     end
+     Storyline_NPCFrameChat.currentIndex = currentIndex;
+
+     local currentText = (textCount > 0 and originalTexts[currentIndex]) or "";
+     QTR_RestoreExternalFontState(Storyline_NPCFrameChatText, QTR_StorylineFontState);
+     Storyline_NPCFrameChatText:SetText(currentText or "");
+     if (Storyline_NPCFrameChatText.SetAlphaGradient) then
+        Storyline_NPCFrameChatText:SetAlphaGradient(string.len(currentText or ""), 1);
+     end
+     Storyline_NPCFrameChat.start = nil;
+  end
+
+  if (Storyline_NPCFrameObjectivesContent) then
+     if (Storyline_NPCFrameObjectivesContent.Title and Storyline_NPCFrameObjectivesContent.Title.IsShown and Storyline_NPCFrameObjectivesContent.Title:IsShown()) then
+        QTR_RestoreExternalFontState(Storyline_NPCFrameObjectivesContent.Title, QTR_StorylineFontState);
+        Storyline_NPCFrameObjectivesContent.Title:SetText(QUEST_OBJECTIVES or (Storyline_NPCFrameObjectivesContent.Title:GetText() or ""));
+     end
+
+     if (Storyline_NPCFrameObjectivesContent.RequiredItemText and Storyline_NPCFrameObjectivesContent.RequiredItemText.IsShown and Storyline_NPCFrameObjectivesContent.RequiredItemText:IsShown()) then
+        QTR_RestoreExternalFontState(Storyline_NPCFrameObjectivesContent.RequiredItemText, QTR_StorylineFontState);
+        Storyline_NPCFrameObjectivesContent.RequiredItemText:SetText(TURN_IN_ITEMS or (Storyline_NPCFrameObjectivesContent.RequiredItemText:GetText() or ""));
+     end
+
+     if (Storyline_NPCFrameObjectivesContent.Objectives and Storyline_NPCFrameObjectivesContent.Objectives.IsShown and Storyline_NPCFrameObjectivesContent.Objectives:IsShown()) then
+        local originalObjectives = QTR_GetStorylineOriginalObjectivesText(eventName, questTitle);
+        QTR_RestoreExternalFontState(Storyline_NPCFrameObjectivesContent.Objectives, QTR_StorylineFontState);
+        Storyline_NPCFrameObjectivesContent.Objectives:SetText(originalObjectives or "");
+     end
+  end
+
+  if (Storyline_NPCFrameRewards and Storyline_NPCFrameRewards.IsShown and Storyline_NPCFrameRewards:IsShown() and Storyline_NPCFrameRewards.Content and Storyline_NPCFrameRewards.Content.Title and Storyline_NPCFrameRewards.Content.Title.IsShown and Storyline_NPCFrameRewards.Content.Title:IsShown()) then
+     QTR_RestoreExternalFontState(Storyline_NPCFrameRewards.Content.Title, QTR_StorylineFontState);
+     Storyline_NPCFrameRewards.Content.Title:SetText(REWARDS or (Storyline_NPCFrameRewards.Content.Title:GetText() or ""));
+  end
+
+  QTR_UpdateStorylineDialogButtons();
+  QTR_RefreshStorylineFrameLayout();
+end
+
+
+function QTR_UpdateStorylineFrame()
+  if (not Storyline_NPCFrame or not Storyline_NPCFrame.IsShown or not Storyline_NPCFrame:IsShown()) then
+     return;
+  end
+
+  local eventName = QTR_GetStorylineEventName();
+  local questTitle = QTR_GetStorylineQuestTitle();
+  local titleFontString = QTR_GetStorylineTitleFontString();
+
+  if (not QTR_PS or QTR_PS["active"] ~= "1") then
+     QTR_RestoreStorylineFrame();
+     return;
+  end
+
+  if (titleFontString) then
+     QTR_GetExternalFontState(titleFontString, QTR_StorylineFontState);
+     if (QTR_PS["transtitle"] == "1") then
+        local translatedTitle = QTR_GetQuestTitleTranslation(questTitle or (titleFontString.GetText and titleFontString:GetText()) or "");
+        if (translatedTitle and translatedTitle ~= "") then
+           local _, titleSize = titleFontString:GetFont();
+           QTR_SetShapedTitleText(titleFontString, translatedTitle, QTR_Font1 or QTR_Font2 or Original_Font2, titleSize or 18, titleFontString:GetWidth());
+        else
+           QTR_RestoreExternalFontState(titleFontString, QTR_StorylineFontState);
+           titleFontString:SetText(questTitle or "");
+        end
+     else
+        QTR_RestoreExternalFontState(titleFontString, QTR_StorylineFontState);
+        titleFontString:SetText(questTitle or "");
+     end
+  end
+
+  local sourceText = QTR_GetStorylineBodySourceText(eventName);
+  local translatedBody = nil;
+  if (eventName == "QUEST_DETAIL" or eventName == "QUEST_PROGRESS" or eventName == "QUEST_COMPLETE") then
+     translatedBody = QTR_GetExternalQuestTextTranslationFromSource(questTitle or "", sourceText or "");
+  elseif (eventName == "QUEST_GREETING") then
+     translatedBody = QTR_GetExternalGossipBodyTranslation(sourceText or "", true);
+  elseif (eventName == "GOSSIP_SHOW") then
+     translatedBody = QTR_GetExternalGossipBodyTranslation(sourceText or "", true);
+  end
+
+  if (Storyline_NPCFrameChat and Storyline_NPCFrameChatText) then
+     QTR_GetExternalFontState(Storyline_NPCFrameChatText, QTR_StorylineFontState);
+  end
+
+  if (translatedBody and translatedBody ~= "" and Storyline_NPCFrameChat and Storyline_NPCFrameChatText) then
+     local translatedTexts = QTR_SplitStorylineTextPages(translatedBody);
+     local _, bodySize = Storyline_NPCFrameChatText:GetFont();
+     local displayTexts = QTR_PrepareStorylineDisplayPages(translatedTexts, Storyline_NPCFrameChatText:GetWidth(), QTR_Font1 or QTR_Font2 or Original_Font2, bodySize or 16);
+     if (#translatedTexts > 0) then
+        Storyline_NPCFrameChat.texts = displayTexts;
+     end
+
+     local activeTexts = Storyline_NPCFrameChat.texts or {};
+     local currentIndex = Storyline_NPCFrameChat.currentIndex or 1;
+     local textCount = #activeTexts;
+     if (currentIndex < 1) then
+        currentIndex = 1;
+     end
+     if (textCount > 0 and currentIndex > textCount) then
+        currentIndex = textCount;
+     end
+     Storyline_NPCFrameChat.currentIndex = currentIndex;
+     if (textCount > 0) then
+        local currentText = activeTexts[currentIndex];
+        if (currentText and currentText ~= "") then
+           local fontName = QTR_Font1 or QTR_Font2 or Original_Font2;
+           Storyline_NPCFrameChatText:SetFont(fontName, bodySize or 16);
+           Storyline_NPCFrameChatText:SetJustifyH((AS_ContainsArabic and AS_ContainsArabic(currentText)) and "RIGHT" or "LEFT");
+           Storyline_NPCFrameChatText:SetText(currentText);
+        end
+     end
+  elseif (Storyline_NPCFrameChat and Storyline_NPCFrameChatText) then
+     local originalTexts = QTR_SplitStorylineTextPages(sourceText);
+     Storyline_NPCFrameChat.texts = originalTexts;
+
+     local textCount = #originalTexts;
+     local currentIndex = Storyline_NPCFrameChat.currentIndex or 1;
+     if (currentIndex < 1) then
+        currentIndex = 1;
+     end
+     if (textCount > 0 and currentIndex > textCount) then
+        currentIndex = textCount;
+     end
+     local currentText = (textCount > 0 and originalTexts[currentIndex]) or "";
+     QTR_RestoreExternalFontState(Storyline_NPCFrameChatText, QTR_StorylineFontState);
+     Storyline_NPCFrameChatText:SetText(currentText or "");
+     if (Storyline_NPCFrameChatText.SetAlphaGradient) then
+        Storyline_NPCFrameChatText:SetAlphaGradient(string.len(currentText or ""), 1);
+     end
+     Storyline_NPCFrameChat.start = nil;
+  end
+
+  if (Storyline_NPCFrameObjectivesContent) then
+     if (Storyline_NPCFrameObjectivesContent.Title and Storyline_NPCFrameObjectivesContent.Title.IsShown and Storyline_NPCFrameObjectivesContent.Title:IsShown()) then
+        QTR_GetExternalFontState(Storyline_NPCFrameObjectivesContent.Title, QTR_StorylineFontState);
+     end
+     if (Storyline_NPCFrameObjectivesContent.RequiredItemText and Storyline_NPCFrameObjectivesContent.RequiredItemText.IsShown and Storyline_NPCFrameObjectivesContent.RequiredItemText:IsShown()) then
+        QTR_GetExternalFontState(Storyline_NPCFrameObjectivesContent.RequiredItemText, QTR_StorylineFontState);
+     end
+     if (Storyline_NPCFrameObjectivesContent.Objectives and Storyline_NPCFrameObjectivesContent.Objectives.IsShown and Storyline_NPCFrameObjectivesContent.Objectives:IsShown()) then
+        QTR_GetExternalFontState(Storyline_NPCFrameObjectivesContent.Objectives, QTR_StorylineFontState);
+     end
+
+     if (Storyline_NPCFrameObjectivesContent.Title and Storyline_NPCFrameObjectivesContent.Title.IsShown and Storyline_NPCFrameObjectivesContent.Title:IsShown() and QTR_Messages and QTR_Messages.objectives) then
+        local _, titleSize = Storyline_NPCFrameObjectivesContent.Title:GetFont();
+        QTR_SetShapedText(Storyline_NPCFrameObjectivesContent.Title, QTR_Messages.objectives, QTR_Font1 or QTR_Font2 or Original_Font2, titleSize or 18);
+     end
+     if (Storyline_NPCFrameObjectivesContent.RequiredItemText and Storyline_NPCFrameObjectivesContent.RequiredItemText.IsShown and Storyline_NPCFrameObjectivesContent.RequiredItemText:IsShown() and QTR_Messages and QTR_Messages.reqitems) then
+        local _, reqSize = Storyline_NPCFrameObjectivesContent.RequiredItemText:GetFont();
+        QTR_SetShapedText(Storyline_NPCFrameObjectivesContent.RequiredItemText, QTR_Messages.reqitems, QTR_Font1 or QTR_Font2 or Original_Font2, reqSize or 13);
+     end
+
+     local objectiveText = QTR_GetExternalQuestObjectivesTranslation(questTitle or "");
+     if (objectiveText and Storyline_NPCFrameObjectivesContent.Objectives and Storyline_NPCFrameObjectivesContent.Objectives.IsShown and Storyline_NPCFrameObjectivesContent.Objectives:IsShown()) then
+        local _, objectiveSize = Storyline_NPCFrameObjectivesContent.Objectives:GetFont();
+        QTR_SetExternalPrefixedText(Storyline_NPCFrameObjectivesContent.Objectives, Storyline_NPCFrameObjectivesContent.Objectives:GetText() or "", objectiveText, QTR_Font1 or QTR_Font2 or Original_Font2, objectiveSize or 13);
+     elseif (Storyline_NPCFrameObjectivesContent.Objectives and Storyline_NPCFrameObjectivesContent.Objectives.IsShown and Storyline_NPCFrameObjectivesContent.Objectives:IsShown()) then
+        local originalObjectives = QTR_GetStorylineOriginalObjectivesText(eventName, questTitle);
+        QTR_RestoreExternalFontState(Storyline_NPCFrameObjectivesContent.Objectives, QTR_StorylineFontState);
+        Storyline_NPCFrameObjectivesContent.Objectives:SetText(originalObjectives or "");
+     end
+  end
+
+  if (Storyline_NPCFrameRewards and Storyline_NPCFrameRewards.IsShown and Storyline_NPCFrameRewards:IsShown() and Storyline_NPCFrameRewards.Content and Storyline_NPCFrameRewards.Content.Title and Storyline_NPCFrameRewards.Content.Title.IsShown and Storyline_NPCFrameRewards.Content.Title:IsShown()) then
+     QTR_GetExternalFontState(Storyline_NPCFrameRewards.Content.Title, QTR_StorylineFontState);
+     if (QTR_Messages and QTR_Messages.rewards) then
+        local _, rewardsSize = Storyline_NPCFrameRewards.Content.Title:GetFont();
+        QTR_SetShapedText(Storyline_NPCFrameRewards.Content.Title, QTR_Messages.rewards, QTR_Font1 or QTR_Font2 or Original_Font2, rewardsSize or 18);
+     else
+        QTR_RestoreExternalFontState(Storyline_NPCFrameRewards.Content.Title, QTR_StorylineFontState);
+     end
+  end
+
+  QTR_UpdateStorylineDialogButtons();
+  QTR_RefreshStorylineFrameLayout();
+end
+
+
+function QTR_TryHookStoryline()
+  if (QTR_StorylineHooked or type(IsAddOnLoaded) ~= "function" or not IsAddOnLoaded("Storyline")) then
+     return QTR_StorylineHooked;
+  end
+  if (not Storyline_API or not Storyline_NPCFrame) then
+     return false;
+  end
+
+  QTR_StorylineHooked = true;
+
+  if (Storyline_API and type(Storyline_API.playNext) == "function") then
+     hooksecurefunc(Storyline_API, "playNext", function()
+        QTR_RequestStorylineRefresh(0);
+     end);
+  end
+
+  if (Storyline_NPCFrame and Storyline_NPCFrame.HookScript) then
+     Storyline_NPCFrame:HookScript("OnShow", function()
+        QTR_RequestStorylineRefresh(0);
+     end);
+  end
+
+  for _, button in ipairs({ Storyline_NPCFrameChatNext, Storyline_NPCFrameChatPrevious, Storyline_NPCFrameChatOption1, Storyline_NPCFrameChatOption2, Storyline_NPCFrameChatOption3, Storyline_NPCFrameObjectives, Storyline_NPCFrameObjectivesYes, Storyline_NPCFrameObjectivesNo, Storyline_NPCFrameObjectives.OK, Storyline_NPCFrameRewardsItem }) do
+     if (button and button.HookScript) then
+        button:HookScript("OnClick", function()
+           QTR_RequestStorylineRefresh(0);
+        end);
+     end
+  end
+
+  if (Storyline_NPCFrameGossipChoices and Storyline_NPCFrameGossipChoices.HookScript) then
+     Storyline_NPCFrameGossipChoices:HookScript("OnShow", function()
+        QTR_RequestStorylineRefresh(0);
+     end);
+     Storyline_NPCFrameGossipChoices:HookScript("OnHide", function()
+        QTR_RequestStorylineRefresh(0);
+     end);
+  end
+
+  QTR_RequestStorylineRefresh(0);
+  return true;
+end
+
+
+function QTR_RefreshStorylineLiveView()
+   if (not QTR_TryHookStoryline() or not Storyline_NPCFrame or not Storyline_NPCFrame.IsShown or not Storyline_NPCFrame:IsShown()) then
+       return;
+   end
+
+   QTR_UpdateStorylineFrame();
+end
+
+
+QTR_StorylineRefreshPending = false;
+
+
+function QTR_RunQueuedStorylineRefresh()
+  QTR_StorylineRefreshPending = false;
+  if (Storyline_NPCFrame and Storyline_NPCFrame.IsShown and Storyline_NPCFrame:IsShown()) then
+     QTR_UpdateStorylineFrame();
+  end
+end
+
+
+function QTR_RequestStorylineRefresh(delay)
+  if (QTR_StorylineRefreshPending) then
+     return;
+  end
+
+  QTR_StorylineRefreshPending = true;
+  if (not QTR_wait(delay or 0, QTR_RunQueuedStorylineRefresh)) then
+     QTR_StorylineRefreshPending = false;
+  end
+end
+
+
 local QTR_QuestLogTitleButtonHooks = {};
 local QTR_QuestLogTitleButtonUpdateLock = {};
 
@@ -1396,6 +3871,7 @@ function QTR_CheckVars()
   if (not QTR_GOSSIP) then
      QTR_GOSSIP = {};
   end
+  QTR_SanitizeSavedGossipEntries();
   -- initialize check options
   if (not QTR_PS["active"]) then
      QTR_PS["active"] = "1";   
@@ -1707,17 +4183,17 @@ function QTR_BlizzardOptions()
 
   local QTRCheckButton0 = CreateFrame("CheckButton", "QTRCheckButton0", QTROptions, "OptionsCheckButtonTemplate");
    QTR_SetOptionsCheckButtonPoint(QTRCheckButton0, QTROptionsModeInfo, false, -10);
-   QTRCheckButton0:SetScript("OnClick", function(self) if (QTR_PS["active"]=="1") then QTR_PS["active"]="0" else QTR_PS["active"]="1" end; QTR_UpdateQuestLogToggleButtonText(); QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); QTR_RefreshQuestieTracker(); end);
+   QTRCheckButton0:SetScript("OnClick", function(self) if (QTR_PS["active"]=="1") then QTR_PS["active"]="0" else QTR_PS["active"]="1" end; QTR_UpdateQuestLogToggleButtonText(); QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); QTR_RefreshQuestieTracker(); QTR_RefreshImmersionLiveView(); QTR_RefreshStorylineLiveView(); end);
   QTR_SetOptionsCheckButtonText(QTRCheckButton0, QTRCheckButton0Text, QTR_ReverseText(QTR_Interface.active));
   
   local QTRCheckButton3 = CreateFrame("CheckButton", "QTRCheckButton3", QTROptions, "OptionsCheckButtonTemplate");
    QTR_SetOptionsCheckButtonPoint(QTRCheckButton3, QTRCheckButton0, true, -10);
-   QTRCheckButton3:SetScript("OnClick", function(self) if (QTR_PS["transtitle"]=="0") then QTR_PS["transtitle"]="1" else QTR_PS["transtitle"]="0" end; QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); QTR_RefreshQuestieTracker(); end);
+   QTRCheckButton3:SetScript("OnClick", function(self) if (QTR_PS["transtitle"]=="0") then QTR_PS["transtitle"]="1" else QTR_PS["transtitle"]="0" end; QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); QTR_RefreshQuestieTracker(); QTR_RefreshImmersionLiveView(); QTR_RefreshStorylineLiveView(); end);
   QTR_SetOptionsCheckButtonText(QTRCheckButton3, QTRCheckButton3Text, QTR_ReverseText(QTR_Interface.transtitle));
   
   local QTRCheckButtonGossip = CreateFrame("CheckButton", "QTRCheckButtonGossip", QTROptions, "OptionsCheckButtonTemplate");
    QTR_SetOptionsCheckButtonPoint(QTRCheckButtonGossip, QTRCheckButton3, true, -10);
-  QTRCheckButtonGossip:SetScript("OnClick", function(self) if (QTR_PS["gossip"]=="1") then QTR_PS["gossip"]="0" else QTR_PS["gossip"]="1" end; end);
+   QTRCheckButtonGossip:SetScript("OnClick", function(self) if (QTR_PS["gossip"]=="1") then QTR_PS["gossip"]="0" else QTR_PS["gossip"]="1" end; QTR_RefreshImmersionLiveView(); QTR_RefreshStorylineLiveView(); end);
   QTR_SetOptionsCheckButtonText(QTRCheckButtonGossip, QTRCheckButtonGossipText, QTR_ReverseText("اعرض ترجمات نصوص الحوار"));
   
   local QTRCheckButtonTutorial = CreateFrame("CheckButton", "QTRCheckButtonTutorial", QTROptions, "OptionsCheckButtonTemplate");
@@ -1762,6 +4238,31 @@ end
 local QTR_RuntimeInitialized = false;
 local QTR_EventFrame = CreateFrame("Frame");
 local QTR_SuppressGossipRefreshHook = false;
+local QTR_GossipRefreshPending = false;
+
+
+local function QTR_RequestGossipRefresh()
+  if (QTR_GossipRefreshPending) then
+     return;
+  end
+
+  QTR_GossipRefreshPending = true;
+
+  local function QTR_RunQueuedGossipRefresh()
+     QTR_GossipRefreshPending = false;
+     if (QTR_SuppressGossipRefreshHook or not QTR_PS or QTR_PS["gossip"] ~= "1") then
+        return;
+     end
+     if (not GossipFrame or not GossipFrame:IsVisible() or not GossipGreetingText or not GossipGreetingText:IsShown()) then
+        return;
+     end
+     QTR_Gossip_Show();
+  end
+
+  if (not QTR_wait(0, QTR_RunQueuedGossipRefresh)) then
+     QTR_RunQueuedGossipRefresh();
+  end
+end
 
 
 local function QTR_InitializeRuntime()
@@ -1822,7 +4323,7 @@ local function QTR_InitializeRuntime()
   if (type(GossipFrameUpdate) == "function") then
      hooksecurefunc("GossipFrameUpdate", function()
         if (not QTR_SuppressGossipRefreshHook and QTR_PS and QTR_PS["gossip"] == "1" and GossipFrame and GossipFrame:IsVisible() and GossipGreetingText and GossipGreetingText:IsShown()) then
-           QTR_Gossip_Show();
+           QTR_RequestGossipRefresh();
         end
      end);
   end
@@ -1852,6 +4353,10 @@ local function QTR_InitializeRuntime()
      hooksecurefunc("WatchFrame_Update", QTR_UpdateWatchFrame);
   end
   QTR_TryHookElvUITracker();
+  QTR_TryHookImmersion();
+  QTR_TryHookStoryline();
+  QTR_TryHookQuestieMapTooltips();
+  QTR_TryHookQuestieUnitTooltips();
   if (TutorialFrame) then
      TutorialFrame:HookScript("OnShow", Tut_onTutorialShow);
      TutorialFrameNextButton:HookScript("OnClick", Tut_onTutorialShow);
@@ -1877,12 +4382,22 @@ QTR_EventFrame:SetScript("OnEvent", function(self, event, ...)
      if (addon == "ArWoW_Quests" and QTR.ADDON_LOADED) then
         QTR:ADDON_LOADED(event, addon);
      end
+     QTR_TryHookQuestieMapTooltips();
+     QTR_TryHookQuestieUnitTooltips();
      QTR_TryHookQuestieTracker();
      QTR_TryHookElvUITracker();
+     QTR_TryHookImmersion();
+     QTR_TryHookStoryline();
      if (addon and string.find(addon, "^Questie")) then
+        QTR_TryHookQuestieMapTooltips();
+        QTR_TryHookQuestieUnitTooltips();
         QTR_RefreshQuestieTracker();
      elseif (addon == "ElvUI") then
         QTR_RefreshWatchFrame();
+     elseif (addon == "Immersion") then
+        QTR_TryHookImmersion();
+     elseif (addon == "Storyline") then
+        QTR_TryHookStoryline();
      end
      return;
   end
@@ -1942,7 +4457,10 @@ function QTR:ADDON_LOADED(_, addon)
      SLASH_ArWoW_QUESTS2 = "/qtr";
      QTR_CheckVars();
              QTR_TryHookElvUITracker();
+       QTR_TryHookImmersion();
+       QTR_TryHookStoryline();
          QTR_TryHookQuestieTracker();
+             QTR_TryHookQuestieMapTooltips();
          QTR_RefreshQuestieTracker();
        QTR_UpdateQuestLogToggleButtonText();
           QTR_RefreshWatchFrame();
@@ -2095,7 +4613,7 @@ end
 -- Translate NPC gossip content when gossip mode is enabled.
 function QTR:GOSSIP_SHOW()
   if (QTR_PS["gossip"] == "1") then
-     QTR_Gossip_Show();
+       QTR_RequestGossipRefresh();
   end
 end  
     
@@ -2325,6 +4843,7 @@ local QTR_GossipGreetingTextOffsetX = 10;
 local QTR_GossipGreetingTextOffsetY = -10;
 local QTR_GossipGreetingArabicOffsetX = -2;
 local QTR_GossipGreetingArabicExtraWidth = 4;
+local QTR_GossipGreetingWrapPadding = 18;
 
 
 local function QTR_EnsureGossipGreetingWidth(useArabicLayout)
@@ -2390,6 +4909,24 @@ local function QTR_SetGossipGreetingText(text, fontName, fontSize, justify)
    QTR_ApplyRTLWidthAdjustment(GossipGreetingText, useArabicLayout, GossipGreetingText);
    GossipGreetingText:SetJustifyH(justify or "LEFT");
    GossipGreetingText:SetText(text or "");
+end
+
+
+local function QTR_GetGossipGreetingWrapWidth()
+   local wrapWidth = QTR_EnsureGossipGreetingWidth(true);
+   if ((not wrapWidth or wrapWidth <= 0) and GossipGreetingText and GossipGreetingText.GetWidth) then
+      wrapWidth = GossipGreetingText:GetWidth();
+   end
+   if (not wrapWidth or wrapWidth <= 0) then
+      wrapWidth = QTR_GossipGreetingTextTargetWidth;
+   end
+
+   wrapWidth = wrapWidth - QTR_GossipGreetingWrapPadding;
+   if (wrapWidth < 220) then
+      wrapWidth = 220;
+   end
+
+   return wrapWidth;
 end
 
 
@@ -2567,6 +5104,8 @@ function QTR_ToggleVisibility()
    QTR_RefreshWorldMapQuestList();
    QTR_RefreshWatchFrame();
    QTR_RefreshQuestieTracker();
+   QTR_RefreshImmersionLiveView();
+   QTR_RefreshStorylineLiveView();
 end
 
 
@@ -2672,7 +5211,7 @@ function QTR_QuestGreeting_Show()
          QTR_ToggleButtonQG:Enable();
       else
          QTR_QuestGreetingState = "0";
-         QTR_GOSSIP[Nazwa_NPC.."@"..tostring(Hash)] = Greeting_Text.."@"..QTR_name..":"..QTR_race..":"..QTR_class;
+         QTR_SaveHarvestedGossipText(Nazwa_NPC, Hash, Greeting_Text);
          QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
          QTR_ToggleButtonQG:Disable();
       end
@@ -2770,7 +5309,7 @@ function QTR_Gossip_Show()
                curr_goss = "1";
                showArabicGossip = true;
                local Greeting_PL = GS_Gossip[Hash];
-               local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, QTR_EnsureGossipGreetingWidth(true), 13, QTR_Font1);
+               local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, QTR_GetGossipGreetingWrapWidth(), 13, QTR_Font1);
                QTR_SetGossipGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
                QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
             end
@@ -2778,7 +5317,7 @@ function QTR_Gossip_Show()
          else                               -- no translation in GOSSIP database
             curr_goss = "0";
             -- save to file
-            QTR_GOSSIP[Nazwa_NPC.."@"..tostring(Hash)] = Greeting_Text.."@"..QTR_name..":"..QTR_race..":"..QTR_class;
+            QTR_SaveHarvestedGossipText(Nazwa_NPC, Hash, Greeting_Text);
             QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
             QTR_ToggleButtonGS:Disable();
          end
@@ -2813,8 +5352,8 @@ function QTR_Gossip_Show()
             for i = 1, maxGossipButtons, 1 do 
                titleButton=getglobal("GossipTitleButton"..tostring(i));
                if (titleButton and titleButton:IsShown() and titleButton.type == "Gossip" and titleButton:GetText()) then
-                  local gostxt = titleButton:GetText();
-                  if (string.find(gostxt, "|cff000000") == nil) then   -- not a quest in gossip
+                  local gostxt = QTR_GetOriginalGossipOptionText(titleButton);
+                  if (gostxt and string.find(gostxt, "|cff000000") == nil) then   -- not a quest in gossip
                      local Hash = StringHash(gostxt);
                      if ( GS_Gossip[Hash] ) then   -- translation of additional text exists
                         local optionWidth = QTR_GetGossipOptionWidth(titleButton);
@@ -2825,7 +5364,7 @@ function QTR_Gossip_Show()
                            QTR_SetTitleButtonText(titleButton, Gossip_AR, QTR_Font1, 13);
                         end
                      else
-                        QTR_GOSSIP[Nazwa_NPC..'@'..tostring(Hash)] = gostxt.."@"..QTR_name..":"..QTR_race..":"..QTR_class;
+                        QTR_SaveHarvestedGossipText(Nazwa_NPC, Hash, gostxt);
                      end
                   end
                end
