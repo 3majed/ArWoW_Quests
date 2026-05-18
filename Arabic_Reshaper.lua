@@ -1,4 +1,4 @@
--- Addon: WoWAR (Version: 12.02) (Date: 2026-03-19)
+﻿-- Addon: WoWAR (Version: 12.02) (Date: 2026-03-19)
 -- Authors: Platine, Dragonarab[DiNaSoR]
 -- Based on: UTF8 library by Kyle Smith
 -- Enhanced: Added diacritics, Persian/Urdu support, performance optimizations, and bug fixes
