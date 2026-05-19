@@ -25,6 +25,7 @@ local QTR_MessOrig = {
       details    = "Description", 
       objectives = "Objectives", 
       rewards    = "Rewards", 
+   bonustalents = "Bonus talents:", 
       itemchoose1= "You will be able to choose one of these rewards:", 
       itemchoose2= "Choose one of these rewards:", 
       itemreceiv1= "You will also receive:", 
@@ -2413,6 +2414,30 @@ local function QTR_GetExternalQuestDisplayLineHeight(fontString, fontName, fontS
 end
 
 
+local function QTR_ShouldSplitExternalQuestAfterPeriod(text, periodIndex)
+  if (type(text) ~= "string" or periodIndex < 1) then
+     return false;
+  end
+
+  if (string.sub(text, periodIndex, periodIndex) ~= ".") then
+     return false;
+  end
+
+  local previousChar = (periodIndex > 1) and string.sub(text, periodIndex - 1, periodIndex - 1) or "";
+  local nextChar = string.sub(text, periodIndex + 1, periodIndex + 1);
+  if (previousChar == "." or nextChar == ".") then
+     return false;
+  end
+
+  local prefixText = string.sub(text, 1, periodIndex - 1);
+  if (string.find(prefixText, "<[^>]*$")) then
+     return false;
+  end
+
+  return true;
+end
+
+
 local function QTR_SplitExternalQuestDisplayPages(displayText, maxLinesPerPage)
   if (type(displayText) ~= "string" or displayText == "") then
      return { "" };
@@ -2438,7 +2463,14 @@ local function QTR_SplitExternalQuestDisplayPages(displayText, maxLinesPerPage)
      if (type(lineText) ~= "string" or lineText == "") then
         return false;
      end
-     return string.find(lineText, "%.%s*$") ~= nil;
+
+     local trimmedLine = string.gsub(lineText, "%s+$", "");
+     local lineLength = string.len(trimmedLine);
+     if (lineLength == 0 or string.sub(trimmedLine, lineLength, lineLength) ~= ".") then
+        return false;
+     end
+
+     return QTR_ShouldSplitExternalQuestAfterPeriod(trimmedLine, lineLength);
   end
 
   local currentLines = {};
@@ -2496,7 +2528,7 @@ local function QTR_SplitExternalQuestSourcePages(sourceText)
      local currentChar = string.sub(sourceText, index, index);
      currentChunk = currentChunk .. currentChar;
 
-     if (currentChar == ".") then
+     if (currentChar == "." and QTR_ShouldSplitExternalQuestAfterPeriod(sourceText, index)) then
         PushChunk();
         while (index < textLength) do
            local nextChar = string.sub(sourceText, index + 1, index + 1);
@@ -2805,6 +2837,11 @@ function QTR_RestoreImmersionQuestContent(frame)
         QTR_RestoreExternalFontState(content.RewardsFrame.XPFrame.ReceiveText, QTR_ImmersionFontState);
         content.RewardsFrame.XPFrame.ReceiveText:SetText(EXPERIENCE_COLON or (content.RewardsFrame.XPFrame.ReceiveText:GetText() or ""));
      end
+
+     if (content.RewardsFrame and content.RewardsFrame.TalentFrame and content.RewardsFrame.TalentFrame.ReceiveText and content.RewardsFrame.TalentFrame.ReceiveText.IsShown and content.RewardsFrame.TalentFrame.ReceiveText:IsShown()) then
+        QTR_RestoreExternalFontState(content.RewardsFrame.TalentFrame.ReceiveText, QTR_ImmersionFontState);
+        content.RewardsFrame.TalentFrame.ReceiveText:SetText(BONUS_TALENTS or (content.RewardsFrame.TalentFrame.ReceiveText:GetText() or ""));
+     end
   end
 
   local progress = elements.Progress;
@@ -3014,6 +3051,12 @@ function QTR_UpdateImmersionQuestContent(frame, titleText)
         local _, xpSize = content.RewardsFrame.XPFrame.ReceiveText:GetFont();
         QTR_GetExternalFontState(content.RewardsFrame.XPFrame.ReceiveText, QTR_ImmersionFontState);
         QTR_SetShapedText(content.RewardsFrame.XPFrame.ReceiveText, QTR_Messages.experience, QTR_Font2 or QTR_Font1 or Original_Font2, xpSize or 13);
+     end
+
+     if (content.RewardsFrame and content.RewardsFrame.TalentFrame and content.RewardsFrame.TalentFrame.ReceiveText and content.RewardsFrame.TalentFrame.ReceiveText.IsShown and content.RewardsFrame.TalentFrame.ReceiveText:IsShown() and QTR_Messages and QTR_Messages.bonustalents) then
+        local _, talentSize = content.RewardsFrame.TalentFrame.ReceiveText:GetFont();
+        QTR_GetExternalFontState(content.RewardsFrame.TalentFrame.ReceiveText, QTR_ImmersionFontState);
+        QTR_SetShapedText(content.RewardsFrame.TalentFrame.ReceiveText, QTR_Messages.bonustalents, QTR_Font2 or QTR_Font1 or Original_Font2, talentSize or 13);
      end
   end
 
@@ -4265,6 +4308,9 @@ local function QTR_RequestGossipRefresh()
 end
 
 
+local QTR_QuestLogDetailRefreshLock = false;
+
+
 local function QTR_InitializeRuntime()
   if (QTR_RuntimeInitialized) then
      return true;
@@ -4301,6 +4347,9 @@ local function QTR_InitializeRuntime()
   end
   if (type(QuestLog_UpdateQuestDetails) == "function") then
      hooksecurefunc("QuestLog_UpdateQuestDetails", function()
+        if (QTR_QuestLogDetailRefreshLock) then
+           return;
+        end
         if (not QTR_wait(0, QTR_UpdateQuestInfo)) then
            QTR_UpdateQuestInfo();
         end
@@ -4760,6 +4809,11 @@ function RestoreOriginalFonts()
   QuestInfoXPFrameReceiveText:SetText(QTR_MessOrig.experience);
   QuestInfoXPFrameReceiveText:SetFont(Original_Font2, 13);
    QuestInfoXPFrameReceiveText:SetJustifyH("LEFT");
+  if (QuestInfoTalentFrameReceiveText) then
+     QuestInfoTalentFrameReceiveText:SetText(QTR_MessOrig.bonustalents);
+     QuestInfoTalentFrameReceiveText:SetFont(Original_Font2, 13);
+     QuestInfoTalentFrameReceiveText:SetJustifyH("LEFT");
+  end
   QuestInfoRequiredMoneyText:SetText(QTR_MessOrig.reqmoney);
   QuestInfoRequiredMoneyText:SetFont(Original_Font2, 13);
    QuestInfoRequiredMoneyText:SetJustifyH("LEFT");
@@ -4802,6 +4856,9 @@ function QTR_ChangeText_InEvent(QTR_event, str_id)
      QTR_SetShapedText(QuestInfoItemReceiveText, QTR_Messages.itemreceiv1, QTR_Font2, 13);
   end
   QTR_SetShapedText(QuestInfoXPFrameReceiveText, QTR_Messages.experience, QTR_Font2, 13);
+  if (QuestInfoTalentFrameReceiveText and QTR_Messages.bonustalents) then
+     QTR_SetShapedText(QuestInfoTalentFrameReceiveText, QTR_Messages.bonustalents, QTR_Font2, 13);
+  end
   QTR_SetShapedText(QuestInfoRequiredMoneyText, QTR_Messages.reqmoney, QTR_Font2, 13);
   QTR_SetShapedText(QuestInfoSpellLearnText, QTR_Messages.learnspell, QTR_Font2, 13);
    QTR_SetShapedText(QuestProgressText, QTR_ExpandUnitInfo(QTR_QuestData[str_id]["Progress"]), QTR_Font1, 13, QTR_QuestBodyLimit);
@@ -4828,12 +4885,7 @@ function QTR_ChangeText_OnQuestLog(qid)
    QTR_SetShapedText(QuestInfoDescriptionText, QTR_description, QTR_Font2, 13, QTR_QuestBodyLimit);
    QTR_SetShapedText(QuestInfoObjectivesHeader, QTR_Messages.objectives, QTR_Font1, 18);
    QTR_SetShapedText(QuestInfoObjectivesText, QTR_objectives, QTR_Font2, 13, QTR_QuestBodyLimit);
-   QTR_SetShapedText(QuestInfoRewardsHeader, QTR_Messages.rewards, QTR_Font1, 18);
-   QTR_SetShapedText(QuestInfoItemChooseText, QTR_Messages.itemchoose1, QTR_Font2, 13);
-   QTR_SetShapedText(QuestInfoItemReceiveText, QTR_Messages.itemreceiv1, QTR_Font2, 13);
-   QTR_SetShapedText(QuestInfoXPFrameReceiveText, QTR_Messages.experience, QTR_Font2, 13);
    QTR_SetShapedText(QuestInfoRequiredMoneyText, QTR_Messages.reqmoney, QTR_Font2, 13);
-   QTR_SetShapedText(QuestInfoSpellLearnText, QTR_Messages.learnspell, QTR_Font2, 13);
 end
 
 
@@ -5016,6 +5068,11 @@ QTR_UpdateWorldMapRewards = function(itemChooseText, itemReceiveText)
          QTR_SetShapedText(MapQuestInfoRewardsFrame.ItemReceiveText, itemReceiveText, QTR_Font2, 11);
       end
    end
+
+   if (QuestInfoTalentFrameReceiveText and QTR_Messages and QTR_Messages.bonustalents) then
+      local _, talentSize = QuestInfoTalentFrameReceiveText:GetFont();
+      QTR_SetShapedText(QuestInfoTalentFrameReceiveText, QTR_Messages.bonustalents, QTR_Font2, talentSize or 13);
+   end
 end
 
 
@@ -5043,6 +5100,13 @@ QTR_RestoreWorldMapRewards = function()
          MapQuestInfoRewardsFrame.ItemReceiveText:SetJustifyH("LEFT");
          MapQuestInfoRewardsFrame.ItemReceiveText:SetText(QTR_MessOrig.itemreceiv1);
       end
+   end
+
+   if (QuestInfoTalentFrameReceiveText) then
+      local _, talentSize = QuestInfoTalentFrameReceiveText:GetFont();
+      QuestInfoTalentFrameReceiveText:SetFont(Original_Font2, talentSize or 13);
+      QuestInfoTalentFrameReceiveText:SetJustifyH("LEFT");
+      QuestInfoTalentFrameReceiveText:SetText(QTR_MessOrig.bonustalents);
    end
 end
 
@@ -5122,8 +5186,202 @@ function QTR_ShowAndUpdateQuestInfo()
 end
 
 
--- No-op kept for the QuestLogDetailScrollFrame OnHide hook.
+local QTR_LastQuestLogSelection = nil;
+local QTR_QuestLogReflowSerial = 0;
+
+
+-- Reset quest log selection tracking when the detail view closes.
 function QTR_HideQuestInfo()
+  QTR_LastQuestLogSelection = nil;
+   QTR_QuestLogDetailRefreshLock = false;
+   QTR_QuestLogReflowSerial = QTR_QuestLogReflowSerial + 1;
+end
+
+
+local function QTR_GetLastVisibleQuestLogObjectiveFrame()
+  local lastObjective = nil;
+  local objectiveIndex = 1;
+
+  while (true) do
+     local objectiveFrame = _G["QuestInfoObjective" .. objectiveIndex];
+     if (not objectiveFrame) then
+        break;
+     end
+
+     if (objectiveFrame.IsShown and objectiveFrame:IsShown()) then
+        lastObjective = objectiveFrame;
+     end
+
+     objectiveIndex = objectiveIndex + 1;
+  end
+
+  return lastObjective or QuestInfoObjectivesFrame;
+end
+
+
+local function QTR_GetLastVisibleQuestLogRewardFrame()
+  local lastFrame = QuestInfoRewardsFrame;
+  local rewardFrames = {
+     QuestInfoItemChooseText,
+     QuestInfoSpellLearnText,
+     QuestInfoItemReceiveText,
+     QuestInfoMoneyFrame,
+     QuestInfoXPFrame,
+     QuestInfoHonorFrame,
+     QuestInfoArenaPointsFrame,
+     QuestInfoTalentFrame,
+     QuestInfoPlayerTitleFrame,
+     QuestInfoReputationsFrame,
+  };
+
+  for _, rewardFrame in ipairs(rewardFrames) do
+     if (rewardFrame and rewardFrame.IsShown and rewardFrame:IsShown()) then
+        lastFrame = rewardFrame;
+     end
+  end
+
+  local rewardIndex = 1;
+  while (true) do
+     local rewardItem = _G["QuestInfoItem" .. rewardIndex];
+     if (not rewardItem) then
+        break;
+     end
+
+     if (rewardItem.IsShown and rewardItem:IsShown()) then
+        local lastBottom = (lastFrame and lastFrame.GetBottom and lastFrame:GetBottom()) or nil;
+        local itemBottom = (rewardItem.GetBottom and rewardItem:GetBottom()) or nil;
+        if (not lastBottom or not itemBottom or itemBottom < lastBottom) then
+           lastFrame = rewardItem;
+        end
+     end
+
+     rewardIndex = rewardIndex + 1;
+  end
+
+  return lastFrame or QuestInfoRewardsFrame;
+end
+
+
+local function QTR_AnchorQuestLogDetailFrame(frame, anchorFrame, offsetX, offsetY)
+  if (not frame or not QuestLogDetailScrollChildFrame) then
+     return nil;
+  end
+
+  frame:SetParent(QuestLogDetailScrollChildFrame);
+  frame:ClearAllPoints();
+  if (anchorFrame) then
+     frame:SetPoint("TOPLEFT", anchorFrame, "BOTTOMLEFT", offsetX, offsetY);
+  else
+     frame:SetPoint("TOPLEFT", QuestLogDetailScrollChildFrame, "TOPLEFT", offsetX, offsetY);
+  end
+
+  return frame;
+end
+
+
+local function QTR_ResetQuestLogDetailScrollPosition()
+  if (QuestLogDetailScrollFrame and QuestLogDetailScrollFrame.SetVerticalScroll) then
+     QuestLogDetailScrollFrame:SetVerticalScroll(0);
+  end
+
+  if (QuestLogDetailScrollFrameScrollBar and QuestLogDetailScrollFrameScrollBar.SetValue) then
+     QuestLogDetailScrollFrameScrollBar:SetValue(0);
+  end
+end
+
+
+-- Reward labels are translated in a delayed follow-up pass so Blizzard refreshes
+-- cannot overwrite them before the quest-log layout settles.
+local function QTR_ApplyQuestLogRewardTranslations()
+  if (not QTR_PS or QTR_PS["active"] == "0" or not QTR_Messages) then
+     return;
+  end
+
+  if (QuestInfoRewardsHeader and QTR_Messages.rewards) then
+     QTR_SetShapedText(QuestInfoRewardsHeader, QTR_Messages.rewards, QTR_Font1, 18);
+  end
+
+  if (QuestInfoItemChooseText and QuestInfoItemChooseText.IsShown and QuestInfoItemChooseText:IsShown() and QTR_Messages.itemchoose1) then
+     QTR_SetShapedText(QuestInfoItemChooseText, QTR_Messages.itemchoose1, QTR_Font2, 13);
+  end
+
+  if (QuestInfoItemReceiveText and QuestInfoItemReceiveText.IsShown and QuestInfoItemReceiveText:IsShown() and QTR_Messages.itemreceiv1) then
+     QTR_SetShapedText(QuestInfoItemReceiveText, QTR_Messages.itemreceiv1, QTR_Font2, 13);
+  end
+
+  if (QuestInfoXPFrameReceiveText and QuestInfoXPFrameReceiveText.IsShown and QuestInfoXPFrameReceiveText:IsShown() and QTR_Messages.experience) then
+     QTR_SetShapedText(QuestInfoXPFrameReceiveText, QTR_Messages.experience, QTR_Font2, 13);
+  end
+
+  if (QuestInfoTalentFrameReceiveText and QuestInfoTalentFrameReceiveText.IsShown and QuestInfoTalentFrameReceiveText:IsShown() and QTR_Messages.bonustalents) then
+     QTR_SetShapedText(QuestInfoTalentFrameReceiveText, QTR_Messages.bonustalents, QTR_Font2, 13);
+  end
+
+  if (QuestInfoSpellLearnText and QuestInfoSpellLearnText.IsShown and QuestInfoSpellLearnText:IsShown() and QTR_Messages.learnspell) then
+     QTR_SetShapedText(QuestInfoSpellLearnText, QTR_Messages.learnspell, QTR_Font2, 13);
+  end
+end
+
+
+local function QTR_ReflowQuestLogDetailLayout(resetScrollBar)
+  if (not QuestLogDetailScrollChildFrame or not QuestInfoTitleHeader or not QuestInfoObjectivesText or not QuestInfoDescriptionHeader or not QuestInfoDescriptionText or not QuestInfoRewardsFrame) then
+     return;
+  end
+
+  local lastFrame = QTR_AnchorQuestLogDetailFrame(QuestInfoTitleHeader, nil, 5, -5);
+  lastFrame = QTR_AnchorQuestLogDetailFrame(QuestInfoObjectivesText, lastFrame, 0, -5) or lastFrame;
+
+  if (QuestInfoTimerFrame and QuestInfoTimerFrame.IsShown and QuestInfoTimerFrame:IsShown()) then
+     lastFrame = QTR_AnchorQuestLogDetailFrame(QuestInfoTimerFrame, lastFrame, 0, -10) or lastFrame;
+  end
+
+  if (QuestInfoObjectivesFrame and QuestInfoObjectivesFrame.IsShown and QuestInfoObjectivesFrame:IsShown()) then
+     QTR_AnchorQuestLogDetailFrame(QuestInfoObjectivesFrame, lastFrame, 0, -10);
+     lastFrame = QTR_GetLastVisibleQuestLogObjectiveFrame() or QuestInfoObjectivesFrame;
+  end
+
+  if (QuestInfoRequiredMoneyFrame and QuestInfoRequiredMoneyFrame.IsShown and QuestInfoRequiredMoneyFrame:IsShown()) then
+     lastFrame = QTR_AnchorQuestLogDetailFrame(QuestInfoRequiredMoneyFrame, lastFrame, 0, 0) or lastFrame;
+  end
+
+  if (QuestInfoGroupSize and QuestInfoGroupSize.IsShown and QuestInfoGroupSize:IsShown()) then
+     lastFrame = QTR_AnchorQuestLogDetailFrame(QuestInfoGroupSize, lastFrame, 0, -10) or lastFrame;
+  end
+
+  lastFrame = QTR_AnchorQuestLogDetailFrame(QuestInfoDescriptionHeader, lastFrame, 0, -10) or lastFrame;
+  lastFrame = QTR_AnchorQuestLogDetailFrame(QuestInfoDescriptionText, lastFrame, 0, -5) or lastFrame;
+
+  QTR_AnchorQuestLogDetailFrame(QuestInfoRewardsFrame, lastFrame, 0, -10);
+  lastFrame = QTR_GetLastVisibleQuestLogRewardFrame() or QuestInfoRewardsFrame;
+
+  if (QuestInfoSpacerFrame) then
+     lastFrame = QTR_AnchorQuestLogDetailFrame(QuestInfoSpacerFrame, lastFrame, 0, -10) or lastFrame;
+  end
+
+  local baseHeight = (QuestLogDetailScrollFrame and QuestLogDetailScrollFrame.GetHeight and QuestLogDetailScrollFrame:GetHeight()) or (QuestLogDetailScrollChildFrame.GetHeight and QuestLogDetailScrollChildFrame:GetHeight()) or 333;
+  local childTop = QuestLogDetailScrollChildFrame.GetTop and QuestLogDetailScrollChildFrame:GetTop();
+  local lastBottom = lastFrame and lastFrame.GetBottom and lastFrame:GetBottom();
+  if (childTop and lastBottom) then
+     local contentHeight = math.ceil(math.max(baseHeight, (childTop - lastBottom) + 18));
+     if (contentHeight > 0 and QuestLogDetailScrollChildFrame.SetHeight) then
+        QuestLogDetailScrollChildFrame:SetHeight(contentHeight);
+     end
+  end
+
+  if (QuestLogDetailScrollFrame and QuestLogDetailScrollFrame.UpdateScrollChildRect) then
+     QuestLogDetailScrollFrame:UpdateScrollChildRect();
+  end
+
+  if (QuestLogDetailScrollFrame and type(ScrollFrame_OnScrollRangeChanged) == "function") then
+     ScrollFrame_OnScrollRangeChanged(QuestLogDetailScrollFrame);
+  end
+
+  if (resetScrollBar) then
+     QTR_ResetQuestLogDetailScrollPosition();
+     if (type(QTR_wait) == "function") then
+        QTR_wait(0, QTR_ResetQuestLogDetailScrollPosition);
+     end
+  end
 end
 
 
@@ -5137,9 +5395,22 @@ function QTR_UpdateQuestInfo()
      return;
   end
 
-  local questTitle, level, questTag, suggestedGroup, isHeader, isCollapsed, isComplete, isDaily, questID = GetQuestLogTitle(questSelected);
+  local _, _, _, _, isHeader, _, _, _, questID = GetQuestLogTitle(questSelected);
   if (isHeader) then
      return;
+  end
+
+  local selectionChanged = (QTR_LastQuestLogSelection ~= questSelected);
+  QTR_LastQuestLogSelection = questSelected;
+
+  if (selectionChanged) then
+     if (type(QuestLog_UpdateQuestDetails) == "function" and not QTR_QuestLogDetailRefreshLock) then
+        QTR_QuestLogDetailRefreshLock = true;
+        QuestLog_UpdateQuestDetails(true);
+        QTR_QuestLogDetailRefreshLock = false;
+     else
+        QTR_ResetQuestLogDetailScrollPosition();
+     end
   end
 
   local qid = tostring(questID);
@@ -5151,6 +5422,31 @@ function QTR_UpdateQuestInfo()
   else
      RestoreOriginalFonts();
   end 
+
+  QTR_ReflowQuestLogDetailLayout(selectionChanged);
+  if (type(QTR_wait) == "function") then
+     QTR_QuestLogReflowSerial = QTR_QuestLogReflowSerial + 1;
+     local reflowSerial = QTR_QuestLogReflowSerial;
+     local expectedSelection = questSelected;
+     local resetScrollBar = selectionChanged;
+     QTR_wait(0.01, function(serial, selectedQuest, shouldResetScroll)
+        if (serial ~= QTR_QuestLogReflowSerial) then
+           return;
+        end
+        if (type(GetQuestLogSelection) == "function" and GetQuestLogSelection() ~= selectedQuest) then
+           return;
+        end
+        if (not QTR_PS or QTR_PS["active"] == "0") then
+           return;
+        end
+
+        QTR_ApplyQuestLogRewardTranslations();
+        QTR_ReflowQuestLogDetailLayout(shouldResetScroll);
+     end, reflowSerial, expectedSelection, resetScrollBar);
+  else
+     QTR_ApplyQuestLogRewardTranslations();
+     QTR_ReflowQuestLogDetailLayout(selectionChanged);
+  end
 end
 
 
