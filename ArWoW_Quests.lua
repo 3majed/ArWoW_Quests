@@ -16,11 +16,13 @@ local QTR_GossipButtonsEN = {};
 local QTR_GossipButtonsAR = {};
 local QTR_QuestGreetingButtonsEN = {};
 local QTR_QuestGreetingButtonsAR = {};
+local QTR_ToggleButtonGR = nil;
 local QTR_QuestGreetingHash = 0;
 local QTR_QuestGreetingState = "0";
 local QTR_WorldMapRetryPending = false;
 local QTR_UpdateWorldMapRewards;
 local QTR_RestoreWorldMapRewards;
+local QTR_UpdateGuildRegistrarFrame;
 local QTR_MessOrig = {
       details    = "Description", 
       objectives = "Objectives", 
@@ -35,7 +37,28 @@ local QTR_MessOrig = {
       reqitems   = "Required items:", 
       experience = "Experience:", 
       currquests = "Current Quests", 
-      avaiquests = "Available Quests", };
+      avaiquests = "Available Quests", 
+      guildservices = "Available Services",
+      guildcharterpurchase = "Purchase a Guild Charter",
+      guildcharterregister = "Register a Guild Charter",
+      guildpurchaseinfo = "To create a guild you must purchase this charter, get 9 unique player signatures, and return the charter to me.  Please enter the desired name for your guild.",
+         arenacharterpurchase = "Purchase a Team Charter",
+         arenacharterturnin = "Turn in your Team Charter",
+         arenapurchaseinfo = "To create an arena team you must purchase this charter, get the same number of unique player signatures as the size of your team, and return the charter to me.  Please enter the desired name for your arena team.",
+         arenateam2v2 = "2v2 Arena Team",
+         arenateam3v3 = "3v3 Arena Team",
+         arenateam5v5 = "5v5 Arena Team",
+        costlabel = "Cost:",
+         purchase = "Purchase",
+                cancel = "Cancel",
+            questlogtitle = "Quest Log",
+          questlogquests = "Quests",
+       noactivequests = "No Active Quests",
+                     abandon = "Abandon",
+                        share = "Share",
+                        track = "Track",
+                        close = "Close",
+               goodbye = "Goodbye", };
 local Original_Font1 = "Fonts\\MORPHEUS.ttf";
 local Original_Font2 = "Fonts\\FRIZQT__.ttf";
 local QTR_QuestBodyLimit = 35;
@@ -760,6 +783,11 @@ local QTR_TitleButtonAnchorCache = {};
 local QTR_TitleButtonFontCache = {};
 
 
+local function QTR_IsQuestTitleButtonName(titleButtonName)
+   return (titleButtonName and (string.find(titleButtonName, "^QuestTitleButton") or string.find(titleButtonName, "^GuildRegistrarButton") or string.find(titleButtonName, "^ArenaRegistrarButton")));
+end
+
+
 local function QTR_SetTitleButtonText(titleButton, text, fontName, fontSize)
   titleButton:SetText(text or "");
 
@@ -777,7 +805,7 @@ local function QTR_SetTitleButtonText(titleButton, text, fontName, fontSize)
 
      fontString:SetFont(fontName, fontSize);
      local titleButtonName = titleButton:GetName();
-     local isQuestTitleButton = titleButtonName and string.find(titleButtonName, "^QuestTitleButton");
+   local isQuestTitleButton = QTR_IsQuestTitleButtonName(titleButtonName);
      local isGossipTitleButton = titleButtonName and string.find(titleButtonName, "^GossipTitleButton");
 
      if ((isQuestTitleButton or isGossipTitleButton) and not QTR_TitleButtonAnchorCache[titleButton]) then
@@ -836,7 +864,7 @@ local function QTR_RestoreTitleButtonFont(titleButton)
   QTR_ApplyRTLWidthAdjustment(fontString, false, titleButton);
 
   local titleButtonName = titleButton:GetName();
-  local isQuestTitleButton = titleButtonName and string.find(titleButtonName, "^QuestTitleButton");
+  local isQuestTitleButton = QTR_IsQuestTitleButtonName(titleButtonName);
   local isGossipTitleButton = titleButtonName and string.find(titleButtonName, "^GossipTitleButton");
   if ((isQuestTitleButton or isGossipTitleButton) and QTR_TitleButtonAnchorCache[titleButton]) then
      fontString:ClearAllPoints();
@@ -903,7 +931,7 @@ local function QTR_PrepareTitleButtonArabicText(titleButton, text, fontName, fon
   local optionWidth = nil;
   if (titleButtonName and string.find(titleButtonName, "^QuestLogScrollFrameButton")) then
      optionWidth = QTR_GetQuestLogTitleWidth(titleButton);
-  elseif (titleButtonName and string.find(titleButtonName, "^QuestTitleButton")) then
+  elseif (QTR_IsQuestTitleButtonName(titleButtonName)) then
      optionWidth = QTR_GetQuestButtonWidth(titleButton);
   elseif (titleButtonName and string.find(titleButtonName, "^GossipTitleButton")) then
      optionWidth = QTR_GetGossipOptionWidth(titleButton);
@@ -3872,8 +3900,109 @@ local function QTR_HookQuestLogTitleButtons()
 end
 
 
+local QTR_QuestLogFontState = setmetatable({}, { __mode = "k" });
+
+
+local function QTR_UpdateQuestLogInlineLabel(fontString, translatedText, originalText, fontName, fallbackSize)
+  if (not fontString) then
+     return;
+  end
+
+  QTR_GetExternalFontState(fontString, QTR_QuestLogFontState);
+
+  local _, fontSize = fontString:GetFont();
+  if (translatedText and translatedText ~= "") then
+     QTR_SetShapedText(fontString, translatedText, fontName or QTR_Font2 or QTR_Font1 or Original_Font2, fontSize or fallbackSize or 13);
+  else
+     QTR_RestoreExternalFontState(fontString, QTR_QuestLogFontState);
+     if (originalText ~= nil) then
+        fontString:SetText(originalText);
+     end
+  end
+end
+
+
+local function QTR_UpdateQuestLogCenteredLabel(fontString, translatedText, originalText, fontName, fallbackSize)
+  if (not fontString) then
+     return;
+  end
+
+  local fontState = QTR_GetExternalFontState(fontString, QTR_QuestLogFontState);
+  local _, fontSize = fontString:GetFont();
+
+  if (translatedText and translatedText ~= "") then
+     local appliedFont = fontName or QTR_Font1 or QTR_Font2 or Original_Font1;
+     local appliedSize = fontSize or fallbackSize or 13;
+     local wrapWidth = (fontString.GetWidth and fontString:GetWidth()) or 0;
+
+     fontString:SetFont(appliedFont, appliedSize, fontState and fontState.flags);
+     QTR_ApplyRTLWidthAdjustment(fontString, true);
+     if (fontString.SetJustifyH) then
+        fontString:SetJustifyH((fontState and fontState.justify) or "CENTER");
+     end
+
+     if (AS_ContainsArabic and AS_ContainsArabic(translatedText)) then
+        fontString:SetText(QTR_PrepareWrappedArabicText(translatedText, wrapWidth, appliedFont, appliedSize));
+     else
+        fontString:SetText(translatedText);
+     end
+  else
+     QTR_RestoreExternalFontState(fontString, QTR_QuestLogFontState);
+     fontString:SetText(originalText or "");
+  end
+end
+
+
+local function QTR_UpdateQuestLogButtonText(button, translatedText, originalText)
+  if (not button or not button.GetFontString) then
+     return;
+  end
+
+  local fontString = button:GetFontString();
+  if (not fontString) then
+     return;
+  end
+
+  QTR_GetExternalFontState(fontString, QTR_QuestLogFontState);
+
+  if (translatedText and translatedText ~= "") then
+     button:SetText(translatedText);
+     QTR_SetShapedText(fontString, translatedText, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+  else
+     QTR_RestoreExternalFontState(fontString, QTR_QuestLogFontState);
+     button:SetText(originalText or "");
+  end
+end
+
+
+local function QTR_UpdateQuestLogFrameLabels()
+  if (not QTR_PS or not QuestLogFrame or not QuestLogFrame:IsVisible()) then
+     return;
+  end
+
+  local showArabic = (QTR_PS["active"] == "1");
+  local _, numQuests = GetNumQuestLogEntries();
+  local maxQuests = MAX_QUESTLOG_QUESTS or MAX_QUESTS or 25;
+  local translatedCountText = nil;
+
+  if (showArabic and QTR_Messages and QTR_Messages.questlogquests) then
+     translatedCountText = string.format("%s: %d/%d", QTR_Messages.questlogquests, numQuests or 0, maxQuests);
+  end
+
+  QTR_UpdateQuestLogCenteredLabel(QuestLogTitleText, (showArabic and QTR_Messages and QTR_Messages.questlogtitle) or nil, QTR_MessOrig.questlogtitle, QTR_Font1 or QTR_Font2 or Original_Font1, 18);
+  QTR_UpdateQuestLogInlineLabel(QuestLogQuestCount, translatedCountText, nil, QTR_Font2 or QTR_Font1 or Original_Font2, 11);
+  QTR_UpdateQuestLogCenteredLabel(QuestLogNoQuestsText, (showArabic and QTR_Messages and QTR_Messages.noactivequests) or nil, QTR_MessOrig.noactivequests, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+  QTR_UpdateQuestLogButtonText(QuestLogFrameAbandonButton, (showArabic and QTR_Messages and QTR_Messages.abandon) or nil, QTR_MessOrig.abandon);
+  QTR_UpdateQuestLogButtonText(QuestLogFramePushQuestButton, (showArabic and QTR_Messages and QTR_Messages.share) or nil, QTR_MessOrig.share);
+  QTR_UpdateQuestLogButtonText(QuestLogFrameTrackButton, (showArabic and QTR_Messages and QTR_Messages.track) or nil, QTR_MessOrig.track);
+  QTR_UpdateQuestLogButtonText(QuestLogFrameCancelButton, (showArabic and QTR_Messages and QTR_Messages.close) or nil, QTR_MessOrig.close);
+end
+
+
 -- Reapply translated quest titles to the visible left quest-log rows after Blizzard redraws them.
 local function QTR_UpdateQuestLogTitleButtons()
+  QTR_UpdateQuestLogFrameLabels();
+
   if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
      return;
   end
@@ -4279,6 +4408,7 @@ end
 
 
 local QTR_RuntimeInitialized = false;
+QTR_ArenaRegistrarHooksInitialized = false;
 local QTR_EventFrame = CreateFrame("Frame");
 local QTR_SuppressGossipRefreshHook = false;
 local QTR_GossipRefreshPending = false;
@@ -4309,6 +4439,75 @@ end
 
 
 local QTR_QuestLogDetailRefreshLock = false;
+
+
+function QTR_RequestArenaRegistrarRefresh()
+  if (not QTR_wait(0, QTR_UpdateArenaRegistrarFrame)) then
+     QTR_UpdateArenaRegistrarFrame();
+  end
+end
+
+
+function QTR_InitializeArenaRegistrarHooks()
+  if (QTR_ArenaRegistrarHooksInitialized) then
+     if (ArenaRegistrarFrame and ArenaRegistrarFrame.IsShown and ArenaRegistrarFrame:IsShown()) then
+        QTR_RequestArenaRegistrarRefresh();
+     end
+     return true;
+  end
+
+  if (not ArenaRegistrarFrame and type(ArenaRegistrar_OnShow) ~= "function") then
+     return false;
+  end
+
+  QTR_ArenaRegistrarHooksInitialized = true;
+
+  if (type(ArenaRegistrar_OnShow) == "function") then
+     hooksecurefunc("ArenaRegistrar_OnShow", function()
+        if (ArenaRegistrarFrame) then
+           ArenaRegistrarFrame.qtrShowOriginalText = nil;
+        end
+        QTR_RequestArenaRegistrarRefresh();
+     end);
+  end
+  if (type(ArenaRegistrar_ShowPurchaseFrame) == "function") then
+     hooksecurefunc("ArenaRegistrar_ShowPurchaseFrame", function()
+        QTR_RequestArenaRegistrarRefresh();
+     end);
+  end
+  if (type(ArenaRegistrar_UpdatePrice) == "function") then
+     hooksecurefunc("ArenaRegistrar_UpdatePrice", function()
+        QTR_RequestArenaRegistrarRefresh();
+     end);
+  end
+  if (type(ArenaRegistrar_OnEvent) == "function") then
+     hooksecurefunc("ArenaRegistrar_OnEvent", function(_, event)
+        if (event == "PETITION_VENDOR_UPDATE" and ArenaRegistrarFrame and ArenaRegistrarFrame:IsShown()) then
+           QTR_RequestArenaRegistrarRefresh();
+        end
+     end);
+  end
+  if (ArenaRegistrarFrame and ArenaRegistrarFrame.HookScript) then
+     ArenaRegistrarFrame:HookScript("OnShow", QTR_RequestArenaRegistrarRefresh);
+     ArenaRegistrarFrame:HookScript("OnEvent", function(_, event)
+        if (event == "PETITION_VENDOR_UPDATE") then
+           QTR_RequestArenaRegistrarRefresh();
+        end
+     end);
+  end
+  if (ArenaRegistrarGreetingFrame and ArenaRegistrarGreetingFrame.HookScript) then
+     ArenaRegistrarGreetingFrame:HookScript("OnShow", QTR_RequestArenaRegistrarRefresh);
+  end
+  if (ArenaRegistrarPurchaseFrame and ArenaRegistrarPurchaseFrame.HookScript) then
+     ArenaRegistrarPurchaseFrame:HookScript("OnShow", QTR_RequestArenaRegistrarRefresh);
+  end
+
+  if (ArenaRegistrarFrame and ArenaRegistrarFrame.IsShown and ArenaRegistrarFrame:IsShown()) then
+     QTR_RequestArenaRegistrarRefresh();
+  end
+
+  return true;
+end
 
 
 local function QTR_InitializeRuntime()
@@ -4376,6 +4575,37 @@ local function QTR_InitializeRuntime()
         end
      end);
   end
+  if (type(GuildRegistrar_OnShow) == "function") then
+     hooksecurefunc("GuildRegistrar_OnShow", function()
+        if (GuildRegistrarFrame) then
+           GuildRegistrarFrame.qtrShowOriginalText = nil;
+        end
+        if (not QTR_wait(0, QTR_UpdateGuildRegistrarFrame)) then
+           QTR_UpdateGuildRegistrarFrame();
+        end
+     end);
+  end
+  if (type(GuildRegistrar_ShowPurchaseFrame) == "function") then
+     hooksecurefunc("GuildRegistrar_ShowPurchaseFrame", function()
+        if (not QTR_wait(0, QTR_UpdateGuildRegistrarFrame)) then
+           QTR_UpdateGuildRegistrarFrame();
+        end
+     end);
+  end
+  QTR_InitializeArenaRegistrarHooks();
+  if (GuildRegistrarFrame) then
+     QTR_ToggleButtonGR = CreateFrame("Button", nil, GuildRegistrarFrame, "UIPanelButtonTemplate");
+     QTR_ToggleButtonGR:SetWidth(52);
+     QTR_ToggleButtonGR:SetHeight(20);
+     QTR_ToggleButtonGR:SetText("EN");
+     QTR_ToggleButtonGR:ClearAllPoints();
+     QTR_ToggleButtonGR:SetPoint("TOPLEFT", GuildRegistrarFrame, "TOPLEFT", 78, -50);
+     QTR_ToggleButtonGR:SetScript("OnClick", function()
+        GuildRegistrarFrame.qtrShowOriginalText = not GuildRegistrarFrame.qtrShowOriginalText;
+        QTR_UpdateGuildRegistrarFrame();
+     end);
+     QTR_ToggleButtonGR:Hide();
+  end
 
   if (QuestFrame) then
      QTR_ToggleButtonQG = CreateFrame("Button", nil, QuestFrame, "UIPanelButtonTemplate");
@@ -4430,6 +4660,9 @@ QTR_EventFrame:SetScript("OnEvent", function(self, event, ...)
      local addon = ...;
      if (addon == "ArWoW_Quests" and QTR.ADDON_LOADED) then
         QTR:ADDON_LOADED(event, addon);
+     end
+     if (addon == "Blizzard_ArenaUI") then
+        QTR_InitializeArenaRegistrarHooks();
      end
      QTR_TryHookQuestieMapTooltips();
      QTR_TryHookQuestieUnitTooltips();
@@ -4618,6 +4851,7 @@ function QTR:QUEST_GREETING()
   if (QTR_PS["gossip"] == "1") then
      QTR_QuestGreeting_Show();
   elseif (QTR_ToggleButtonQG) then
+     QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, false);
      QTR_ToggleButtonQG:Hide();
   end
 end
@@ -4663,6 +4897,8 @@ end
 function QTR:GOSSIP_SHOW()
   if (QTR_PS["gossip"] == "1") then
        QTR_RequestGossipRefresh();
+   else
+       QTR_UpdateGreetingGoodbyeButton(GossipFrameGreetingGoodbyeButton, false);
   end
 end  
     
@@ -4896,6 +5132,7 @@ local QTR_GossipGreetingTextOffsetY = -10;
 local QTR_GossipGreetingArabicOffsetX = -2;
 local QTR_GossipGreetingArabicExtraWidth = 4;
 local QTR_GossipGreetingWrapPadding = 18;
+local QTR_GreetingButtonFontState = setmetatable({}, { __mode = "k" });
 
 
 local function QTR_EnsureGossipGreetingWidth(useArabicLayout)
@@ -4982,6 +5219,28 @@ local function QTR_GetGossipGreetingWrapWidth()
 end
 
 
+local function QTR_UpdateGreetingGoodbyeButton(button, showArabic)
+   if (not button or not button.GetFontString) then
+      return;
+   end
+
+   local fontString = button:GetFontString();
+   if (not fontString) then
+      return;
+   end
+
+   QTR_GetExternalFontState(fontString, QTR_GreetingButtonFontState);
+
+   if (showArabic and QTR_Messages and QTR_Messages.goodbye) then
+      button:SetText(QTR_Messages.goodbye);
+      QTR_SetShapedText(fontString, QTR_Messages.goodbye, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   else
+      QTR_RestoreExternalFontState(fontString, QTR_GreetingButtonFontState);
+      button:SetText(QTR_MessOrig.goodbye or GOODBYE or "Goodbye");
+   end
+end
+
+
 -- Set the quest greeting text with explicit font and alignment.
 local function QTR_SetQuestGreetingText(text, fontName, fontSize, justify)
    if (not GreetingText) then
@@ -5044,6 +5303,261 @@ QTR_SetQuestGreetingHeaders = function(showArabic)
          AvailableQuestsText:SetJustifyH("LEFT");
       end
    end
+end
+
+
+local QTR_GuildRegistrarFontState = setmetatable({}, { __mode = "k" });
+
+
+local function QTR_UpdateGuildRegistrarWrappedText(fontString, translatedText, originalText, fontName, fallbackSize)
+   if (not fontString) then
+      return;
+   end
+
+   QTR_GetExternalFontState(fontString, QTR_GuildRegistrarFontState);
+   local _, fontSize = fontString:GetFont();
+   if (translatedText and translatedText ~= "") then
+      local wrapWidth = (fontString.GetWidth and fontString:GetWidth()) or 0;
+      QTR_SetShapedTitleText(fontString, translatedText, fontName or QTR_Font1 or QTR_Font2 or Original_Font2, fontSize or fallbackSize or 13, wrapWidth);
+   else
+      QTR_RestoreExternalFontState(fontString, QTR_GuildRegistrarFontState);
+      fontString:SetText(originalText or "");
+   end
+end
+
+
+local function QTR_UpdateGuildRegistrarInlineText(fontString, translatedText, originalText, fontName, fallbackSize)
+   if (not fontString) then
+      return;
+   end
+
+   QTR_GetExternalFontState(fontString, QTR_GuildRegistrarFontState);
+   local _, fontSize = fontString:GetFont();
+   if (translatedText and translatedText ~= "") then
+      QTR_SetShapedText(fontString, translatedText, fontName or QTR_Font2 or QTR_Font1 or Original_Font2, fontSize or fallbackSize or 13);
+   else
+      QTR_RestoreExternalFontState(fontString, QTR_GuildRegistrarFontState);
+      fontString:SetText(originalText or "");
+   end
+end
+
+
+local function QTR_UpdateGuildRegistrarOptionButton(titleButton, translatedText, originalText)
+   if (not titleButton) then
+      return;
+   end
+
+   if (translatedText and translatedText ~= "") then
+      local displayText = QTR_PrepareTitleButtonArabicText(titleButton, translatedText, QTR_Font1 or QTR_Font2 or Original_Font2, 13);
+      QTR_SetTitleButtonText(titleButton, displayText, QTR_Font1 or QTR_Font2 or Original_Font2, 13);
+   else
+      QTR_RestoreTitleButtonFont(titleButton);
+      titleButton:SetText(originalText or "");
+   end
+end
+
+
+function QTR_FindFrameFontStringByText(frame, ...)
+   if (not frame or not frame.GetRegions) then
+      return nil;
+   end
+
+   local candidates = { ... };
+   local regions = { frame:GetRegions() };
+   for _, region in ipairs(regions) do
+      if (region and region.GetObjectType and region:GetObjectType() == "FontString") then
+         local regionText = region:GetText() or "";
+         for _, candidateText in ipairs(candidates) do
+            if (candidateText and candidateText ~= "" and regionText == candidateText) then
+               return region;
+            end
+         end
+      end
+   end
+
+   return nil;
+end
+
+
+function QTR_GetArenaRegistrarGreetingLabels()
+   if (not ArenaRegistrarGreetingFrame) then
+      return nil, nil;
+   end
+
+   local purchaseLabel = ArenaRegistrarGreetingFrame.qtrPurchaseLabel;
+   local registrationLabel = ArenaRegistrarGreetingFrame.qtrRegistrationLabel;
+
+   if (purchaseLabel and purchaseLabel.GetParent and purchaseLabel:GetParent() ~= ArenaRegistrarGreetingFrame) then
+      purchaseLabel = nil;
+      ArenaRegistrarGreetingFrame.qtrPurchaseLabel = nil;
+   end
+   if (registrationLabel and registrationLabel.GetParent and registrationLabel:GetParent() ~= ArenaRegistrarGreetingFrame) then
+      registrationLabel = nil;
+      ArenaRegistrarGreetingFrame.qtrRegistrationLabel = nil;
+   end
+
+   if (not purchaseLabel) then
+      purchaseLabel = QTR_FindFrameFontStringByText(ArenaRegistrarGreetingFrame, QTR_MessOrig.arenacharterpurchase, ARENA_CHARTER_PURCHASE);
+   end
+   if (not registrationLabel) then
+      registrationLabel = QTR_FindFrameFontStringByText(ArenaRegistrarGreetingFrame, QTR_MessOrig.arenacharterturnin, ARENA_CHARTER_TURN_IN);
+   end
+
+   if (not purchaseLabel and AvailableServicesText and AvailableServicesText.GetParent and AvailableServicesText:GetParent() == ArenaRegistrarGreetingFrame) then
+      purchaseLabel = AvailableServicesText;
+   end
+   if (not registrationLabel and RegistrationText and RegistrationText.GetParent and RegistrationText:GetParent() == ArenaRegistrarGreetingFrame) then
+      registrationLabel = RegistrationText;
+   end
+
+   if (purchaseLabel) then
+      ArenaRegistrarGreetingFrame.qtrPurchaseLabel = purchaseLabel;
+   end
+   if (registrationLabel) then
+      ArenaRegistrarGreetingFrame.qtrRegistrationLabel = registrationLabel;
+   end
+
+   return purchaseLabel, registrationLabel;
+end
+
+
+-- Translate the guild registrar's special greeting and purchase frames.
+QTR_UpdateGuildRegistrarFrame = function()
+   if (not GuildRegistrarFrame) then
+      return;
+   end
+
+   local showArabic = (QTR_PS and QTR_PS["active"] == "1");
+   local showArabicGossip = (QTR_PS and QTR_PS["gossip"] == "1");
+   local showOriginalText = (GuildRegistrarFrame.qtrShowOriginalText == true);
+   local showArabicHeader = (showArabic and not showOriginalText);
+   local showArabicGossipText = (showArabicGossip and not showOriginalText);
+
+   if (QTR_ToggleButtonGR) then
+      if ((showArabic or showArabicGossip) and GuildRegistrarFrame.IsShown and GuildRegistrarFrame:IsShown()) then
+         QTR_ToggleButtonGR:SetText(showOriginalText and "AR" or "OG");
+         QTR_ToggleButtonGR:Show();
+      else
+         QTR_ToggleButtonGR:Hide();
+      end
+   end
+
+   if (GuildRegistrarText and GuildRegistrarText.GetText) then
+      local currentText = GuildRegistrarText:GetText() or "";
+      if (currentText ~= "" and not QTR_IsArabicGossipText(currentText)) then
+         GuildRegistrarText.qtrOriginalDisplayText = currentText;
+      end
+
+      local originalText = GuildRegistrarText.qtrOriginalDisplayText or currentText;
+      local translatedText = nil;
+      if (showArabicGossipText and originalText ~= "") then
+         translatedText = QTR_GetExternalGossipBodyTranslation(originalText, true);
+      end
+
+      QTR_UpdateGuildRegistrarWrappedText(GuildRegistrarText, translatedText, originalText, QTR_Font1 or QTR_Font2 or Original_Font2, 13);
+   end
+
+   local translatedServicesText = (showArabicHeader and QTR_Messages and QTR_Messages.guildservices) or nil;
+   if (AvailableServicesText) then
+      AvailableServicesText:SetWidth((translatedServicesText and translatedServicesText ~= "") and 280 or 300);
+   end
+   QTR_UpdateGuildRegistrarWrappedText(AvailableServicesText, translatedServicesText, QTR_MessOrig.guildservices, QTR_Font1 or QTR_Font2 or Original_Font1, 18);
+
+   local translatedPurchaseButton = (showArabicGossipText and QTR_Messages and QTR_Messages.guildcharterpurchase) or nil;
+   local translatedRegisterButton = (showArabicGossipText and QTR_Messages and QTR_Messages.guildcharterregister) or nil;
+   QTR_UpdateGuildRegistrarOptionButton(GuildRegistrarButton1, translatedPurchaseButton, QTR_MessOrig.guildcharterpurchase);
+   QTR_UpdateGuildRegistrarOptionButton(GuildRegistrarButton2, translatedRegisterButton, QTR_MessOrig.guildcharterregister);
+
+   local translatedPurchaseText = (showArabicGossipText and QTR_Messages and QTR_Messages.guildpurchaseinfo) or nil;
+   local translatedCostLabel = (showArabicHeader and QTR_Messages and QTR_Messages.costlabel) or nil;
+   local translatedPurchaseAction = (showArabicHeader and QTR_Messages and QTR_Messages.purchase) or nil;
+   local translatedCancelAction = (showArabicHeader and QTR_Messages and QTR_Messages.cancel) or nil;
+
+   QTR_UpdateGuildRegistrarWrappedText(GuildRegistrarPurchaseText, translatedPurchaseText, QTR_MessOrig.guildpurchaseinfo, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateGuildRegistrarInlineText(GuildRegistrarCostLabel, translatedCostLabel, QTR_MessOrig.costlabel, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateGuildRegistrarInlineText((GuildRegistrarFramePurchaseButton and GuildRegistrarFramePurchaseButton:GetFontString()) or nil, translatedPurchaseAction, QTR_MessOrig.purchase, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateGuildRegistrarInlineText((GuildRegistrarFrameCancelButton and GuildRegistrarFrameCancelButton:GetFontString()) or nil, translatedCancelAction, QTR_MessOrig.cancel, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateGuildRegistrarInlineText((GuildRegistrarFrameGoodbyeButton and GuildRegistrarFrameGoodbyeButton:GetFontString()) or nil, translatedCancelAction, QTR_MessOrig.cancel, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+end
+
+
+QTR_UpdateArenaRegistrarFrame = function()
+   if (not ArenaRegistrarFrame) then
+      return;
+   end
+
+   if (not ArenaRegistrarFrame.qtrToggleButton) then
+      ArenaRegistrarFrame.qtrToggleButton = CreateFrame("Button", nil, ArenaRegistrarFrame, "UIPanelButtonTemplate");
+      ArenaRegistrarFrame.qtrToggleButton:SetWidth(52);
+      ArenaRegistrarFrame.qtrToggleButton:SetHeight(20);
+      ArenaRegistrarFrame.qtrToggleButton:SetText("EN");
+      ArenaRegistrarFrame.qtrToggleButton:ClearAllPoints();
+      ArenaRegistrarFrame.qtrToggleButton:SetPoint("TOPLEFT", ArenaRegistrarFrame, "TOPLEFT", 78, -50);
+      ArenaRegistrarFrame.qtrToggleButton:SetScript("OnClick", function()
+         ArenaRegistrarFrame.qtrShowOriginalText = not ArenaRegistrarFrame.qtrShowOriginalText;
+         QTR_UpdateArenaRegistrarFrame();
+      end);
+      ArenaRegistrarFrame.qtrToggleButton:Hide();
+   end
+
+   local showArabic = (QTR_PS and QTR_PS["active"] == "1");
+   local showArabicGossip = (QTR_PS and QTR_PS["gossip"] == "1");
+   local showOriginalText = (ArenaRegistrarFrame.qtrShowOriginalText == true);
+   local showArabicHeader = (showArabic and not showOriginalText);
+   local showArabicGossipText = (showArabicGossip and showArabic and not showOriginalText);
+
+   if (ArenaRegistrarFrame.qtrToggleButton) then
+      if ((showArabic or showArabicGossipText) and ArenaRegistrarFrame.IsShown and ArenaRegistrarFrame:IsShown()) then
+         ArenaRegistrarFrame.qtrToggleButton:SetText(showOriginalText and "AR" or "OG");
+         ArenaRegistrarFrame.qtrToggleButton:Show();
+      else
+         ArenaRegistrarFrame.qtrToggleButton:Hide();
+      end
+   end
+
+   if (ArenaRegistrarText and ArenaRegistrarText.GetText) then
+      local currentText = ArenaRegistrarText:GetText() or "";
+      if (currentText ~= "" and not QTR_IsArabicGossipText(currentText)) then
+         ArenaRegistrarText.qtrOriginalDisplayText = currentText;
+      end
+
+      local originalText = ArenaRegistrarText.qtrOriginalDisplayText or currentText;
+      local translatedText = nil;
+      if (showArabicGossipText and originalText ~= "") then
+         translatedText = QTR_GetExternalGossipBodyTranslation(originalText, true);
+      end
+
+      QTR_UpdateGuildRegistrarWrappedText(ArenaRegistrarText, translatedText, originalText, QTR_Font1 or QTR_Font2 or Original_Font2, 13);
+   end
+
+   local arenaPurchaseLabel, arenaRegistrationLabel = QTR_GetArenaRegistrarGreetingLabels();
+   if (arenaPurchaseLabel) then
+      arenaPurchaseLabel:SetWidth(((showArabicHeader and QTR_Messages and QTR_Messages.arenacharterpurchase) and 280) or 300);
+   end
+
+   QTR_UpdateGuildRegistrarWrappedText(arenaPurchaseLabel, (showArabicHeader and QTR_Messages and QTR_Messages.arenacharterpurchase) or nil, QTR_MessOrig.arenacharterpurchase, QTR_Font1 or QTR_Font2 or Original_Font1, 18);
+   QTR_UpdateGuildRegistrarWrappedText(arenaRegistrationLabel, (showArabicHeader and QTR_Messages and QTR_Messages.arenacharterturnin) or nil, QTR_MessOrig.arenacharterturnin, QTR_Font1 or QTR_Font2 or Original_Font1, 18);
+
+   local translatedTeam2v2 = (showArabicGossipText and QTR_Messages and QTR_Messages.arenateam2v2) or nil;
+   local translatedTeam3v3 = (showArabicGossipText and QTR_Messages and QTR_Messages.arenateam3v3) or nil;
+   local translatedTeam5v5 = (showArabicGossipText and QTR_Messages and QTR_Messages.arenateam5v5) or nil;
+
+   QTR_UpdateGuildRegistrarOptionButton(ArenaRegistrarButton1, translatedTeam2v2, QTR_MessOrig.arenateam2v2);
+   QTR_UpdateGuildRegistrarOptionButton(ArenaRegistrarButton2, translatedTeam3v3, QTR_MessOrig.arenateam3v3);
+   QTR_UpdateGuildRegistrarOptionButton(ArenaRegistrarButton3, translatedTeam5v5, QTR_MessOrig.arenateam5v5);
+   QTR_UpdateGuildRegistrarOptionButton(ArenaRegistrarButton4, translatedTeam2v2, QTR_MessOrig.arenateam2v2);
+   QTR_UpdateGuildRegistrarOptionButton(ArenaRegistrarButton5, translatedTeam3v3, QTR_MessOrig.arenateam3v3);
+   QTR_UpdateGuildRegistrarOptionButton(ArenaRegistrarButton6, translatedTeam5v5, QTR_MessOrig.arenateam5v5);
+
+   if (ArenaRegistrarPurchaseText) then
+      ArenaRegistrarPurchaseText:SetWidth(((showArabicGossipText and QTR_Messages and QTR_Messages.arenapurchaseinfo) and 280) or 270);
+   end
+
+   QTR_UpdateGuildRegistrarWrappedText(ArenaRegistrarPurchaseText, (showArabicGossipText and QTR_Messages and QTR_Messages.arenapurchaseinfo) or nil, QTR_MessOrig.arenapurchaseinfo, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateGuildRegistrarInlineText(ArenaRegistrarCostLabel, (showArabicHeader and QTR_Messages and QTR_Messages.costlabel) or nil, QTR_MessOrig.costlabel, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateGuildRegistrarInlineText((ArenaRegistrarFramePurchaseButton and ArenaRegistrarFramePurchaseButton:GetFontString()) or nil, (showArabicHeader and QTR_Messages and QTR_Messages.purchase) or nil, QTR_MessOrig.purchase, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateGuildRegistrarInlineText((ArenaRegistrarFrameCancelButton and ArenaRegistrarFrameCancelButton:GetFontString()) or nil, (showArabicHeader and QTR_Messages and QTR_Messages.cancel) or nil, QTR_MessOrig.cancel, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateGuildRegistrarInlineText((ArenaRegistrarFrameGoodbyeButton and ArenaRegistrarFrameGoodbyeButton:GetFontString()) or nil, (showArabicHeader and QTR_Messages and QTR_Messages.cancel) or nil, QTR_MessOrig.cancel, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
 end
 
 
@@ -5165,6 +5679,8 @@ function QTR_ToggleVisibility()
      QTR_RestoreQuestLogEnglish();
   end
    QTR_UpdateQuestLogToggleButtonText();
+   QTR_UpdateGuildRegistrarFrame();
+   QTR_UpdateArenaRegistrarFrame();
    QTR_RefreshWorldMapQuestList();
    QTR_RefreshWatchFrame();
    QTR_RefreshQuestieTracker();
@@ -5463,6 +5979,7 @@ function GS_ON_OFF_QUEST()
       QTR_SetQuestGreetingText(QTR_GS[QTR_QuestGreetingHash], Original_Font2, 13, "LEFT");
       QTR_SetQuestGreetingHeaders(false);
       QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsEN, Original_Font2, 13);
+      QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, false);
       QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(QTR_QuestGreetingHash).."] EN");
    else
       QTR_QuestGreetingState="1";
@@ -5470,6 +5987,7 @@ function GS_ON_OFF_QUEST()
       QTR_SetQuestGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
       QTR_SetQuestGreetingHeaders(true);
       QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsAR, QTR_Font1, 13);
+      QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, true);
       QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(QTR_QuestGreetingHash).."] AR");
    end
 end
@@ -5503,11 +6021,13 @@ function QTR_QuestGreeting_Show()
          QTR_QuestGreetingState = "1";
          local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[Hash], GreetingText:GetWidth(), 13, QTR_Font1);
          QTR_SetQuestGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
+         QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, true);
          QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
          QTR_ToggleButtonQG:Enable();
       else
          QTR_QuestGreetingState = "0";
          QTR_SaveHarvestedGossipText(Nazwa_NPC, Hash, Greeting_Text);
+         QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, false);
          QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
          QTR_ToggleButtonQG:Disable();
       end
@@ -5539,6 +6059,7 @@ function QTR_QuestGreeting_Show()
       end
    else
       QTR_QuestGreetingState = "0";
+      QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, false);
       QTR_ToggleButtonQG:SetText("Gossip-Hash=?");
       QTR_ToggleButtonQG:Disable();
    end
@@ -5564,6 +6085,7 @@ function GS_ON_OFF()
       end
       QTR_RestoreVisibleGossipTitleButtons();
       QTR_SetGossipGreetingText(originalGreetingText, Original_Font2, 13, "LEFT");
+      QTR_UpdateGreetingGoodbyeButton(GossipFrameGreetingGoodbyeButton, false);
       QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(curr_hash).."] EN");
    else                             -- show translation AR
       curr_goss="1";
@@ -5617,6 +6139,7 @@ function QTR_Gossip_Show()
             QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
             QTR_ToggleButtonGS:Disable();
          end
+         QTR_UpdateGreetingGoodbyeButton(GossipFrameGreetingGoodbyeButton, showArabicGossip);
          local maxGossipButtons = NUMGOSSIPBUTTONS or 32;
          local questButton;
          for i = 1, maxGossipButtons, 1 do
