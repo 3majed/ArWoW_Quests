@@ -57,11 +57,68 @@ local QTR_MessOrig = {
                      abandon = "Abandon",
                         share = "Share",
                         track = "Track",
+                     showmap = SHOW_MAP or "Show Map",
                         close = "Close",
                goodbye = "Goodbye", };
 local Original_Font1 = "Fonts\\MORPHEUS.ttf";
 local Original_Font2 = "Fonts\\FRIZQT__.ttf";
-local QTR_QuestBodyLimit = 35;
+
+-- Safe tuning block: edit these values to adjust translated layout without touching logic.
+-- Keep them non-local on purpose, because WoW's Lua chunk limit is 200 locals.
+
+-- Body wrapping. QTR_QuestBodyLimit is the manual line-break limit for classic quest text.
+local QTR_QuestBodyLimit = 32; -- line-wrap limit for classic quest body reshaping
+
+-- Maximum wrap width used by translated gossip bodies in external dialogue panes.
+QTR_ImmersionGossipBodyTargetWidth = 360; -- cap for external gossip body width
+
+-- Button/title spacing for translated quest and gossip rows.
+QTR_GossipOptionIconPadding = 16; -- space reserved for gossip row icons
+QTR_GossipOptionMinWidth = 40; -- minimum usable gossip row width
+QTR_QuestTitleIconPadding = 16; -- space reserved for quest row icons
+QTR_QuestTitleMinWidth = 40; -- minimum usable quest row width
+QTR_QuestLogTitleBasePadding = 20; -- base padding inside quest log rows
+QTR_QuestLogTitleTagPadding = 4; -- extra space after quest tag text
+QTR_QuestLogTitleCheckPadding = 2; -- extra space after quest completion check
+QTR_QuestLogTitleMinWidth = 40; -- minimum usable quest log row width
+
+-- Gossip greeting text box size, anchor offsets, and wrap padding.
+-- Parent padding values clamp the text box when the frame is narrower than the target width.
+QTR_GossipGreetingTextTargetWidth = 265; -- preferred gossip greeting width
+QTR_GossipGreetingTextOffsetX = 10; -- default greeting anchor X offset
+QTR_GossipGreetingTextOffsetY = -10; -- default greeting anchor Y offset
+QTR_GossipGreetingArabicOffsetX = -2; -- extra X shift for Arabic layout
+QTR_GossipGreetingArabicExtraWidth = 4; -- extra width granted to Arabic text
+QTR_GossipGreetingWrapPadding = 18; -- wrap padding removed before shaping
+QTR_GossipGreetingArabicParentPadding = 15; -- frame-edge padding in Arabic mode
+QTR_GossipGreetingDefaultParentPadding = 20; -- frame-edge padding in original mode
+QTR_GossipGreetingMinWidth = 220; -- smallest allowed greeting text width
+
+-- Quest greeting text area width and header width.
+QTR_QuestGreetingTextTargetWidth = 320; -- preferred quest greeting width
+QTR_QuestGreetingParentPadding = 40; -- frame-edge padding for quest greetings
+QTR_QuestGreetingMinWidth = 280; -- smallest allowed quest greeting width
+QTR_QuestGreetingHeaderWidth = 280; -- width for greeting section headers
+
+-- Addon options panel layout in Interface Options.
+QTR_OptionsTextWidth = 360; -- width for option description text
+QTR_OptionsHeaderWidth = 420; -- width for the options panel header
+QTR_OptionsTextRight = -40; -- right offset for option text anchors
+QTR_OptionsCheckRight = QTR_OptionsTextRight + 12; -- right offset for option checkboxes
+
+-- Font sizes for translated quest log, greetings, and button rows.
+QTR_QuestLogEntryFontSize = 13; -- quest log list entry size
+QTR_QuestLogHeaderFontSize = 18; -- quest log title size
+QTR_QuestLogCountFontSize = 11; -- quest count text size
+QTR_QuestLogEmptyFontSize = 13; -- no-active-quests text size
+QTR_QuestLogActionButtonFontSize = 13; -- quest log button text size
+QTR_QuestLogShowMapFontSize = 13; -- Show Map label size
+QTR_GossipGreetingFontSize = 13; -- gossip greeting body text size
+QTR_QuestGreetingFontSize = 13; -- quest greeting body text size
+QTR_QuestGreetingHeaderFontSize = 18; -- quest greeting header size
+QTR_GreetingGoodbyeFontSize = 13; -- goodbye button text size
+QTR_QuestButtonFontSize = 13; -- translated quest choice button size
+QTR_GossipButtonFontSize = 13; -- translated gossip option button size
 local Tut_ID = 0;
 if not QTR then
    QTR = { };
@@ -880,9 +937,9 @@ local function QTR_GetGossipOptionWidth(titleButton)
   local optionWidth = titleButton:GetWidth();
   local buttonIcon = _G[titleButton:GetName() .. "GossipIcon"];
   if (buttonIcon) then
-     optionWidth = optionWidth - buttonIcon:GetWidth() - 16;
+     optionWidth = optionWidth - buttonIcon:GetWidth() - QTR_GossipOptionIconPadding;
   end
-  if (optionWidth < 40) then
+  if (optionWidth < QTR_GossipOptionMinWidth) then
      optionWidth = titleButton:GetWidth();
   end
   return optionWidth;
@@ -890,18 +947,18 @@ end
 
 
 local function QTR_GetQuestLogTitleWidth(titleButton)
-  local optionWidth = (titleButton:GetWidth() or 0) - 20;
+  local optionWidth = (titleButton:GetWidth() or 0) - QTR_QuestLogTitleBasePadding;
   local questTitleTag = titleButton.tag;
   local questCheck = titleButton.check;
 
   if (questTitleTag and questTitleTag:IsShown()) then
-     optionWidth = optionWidth - questTitleTag:GetWidth() - 4;
+     optionWidth = optionWidth - questTitleTag:GetWidth() - QTR_QuestLogTitleTagPadding;
   end
   if (questCheck and questCheck:IsShown()) then
-     optionWidth = optionWidth - questCheck:GetWidth() - 2;
+     optionWidth = optionWidth - questCheck:GetWidth() - QTR_QuestLogTitleCheckPadding;
   end
 
-  if (optionWidth < 40) then
+  if (optionWidth < QTR_QuestLogTitleMinWidth) then
      optionWidth = titleButton:GetWidth();
   end
   return optionWidth;
@@ -913,9 +970,9 @@ local function QTR_GetQuestButtonWidth(titleButton)
   local optionWidth = titleButton:GetWidth();
   local buttonIcon = _G[titleButton:GetName() .. "QuestIcon"];
   if (buttonIcon) then
-     optionWidth = optionWidth - buttonIcon:GetWidth() - 16;
+     optionWidth = optionWidth - buttonIcon:GetWidth() - QTR_QuestTitleIconPadding;
   end
-  if (optionWidth < 40) then
+  if (optionWidth < QTR_QuestTitleMinWidth) then
      optionWidth = titleButton:GetWidth();
   end
   return optionWidth;
@@ -2244,10 +2301,6 @@ local function QTR_SetExternalPrefixedText(fontString, originalText, translatedT
      fontString:SetText((prefixTexture or "") .. (prefixColor or "") .. translatedText .. suffixColor);
   end
 end
-
-
-local QTR_ImmersionGossipBodyTargetWidth = 360;
-
 
 local function QTR_GetExternalGossipBodyWrapWidth(fontString)
   if (not fontString) then
@@ -3853,11 +3906,11 @@ local function QTR_UpdateQuestLogTitleButton(titleButton, displayText)
      end
   end
 
-  local translatedDisplayTitle = QTR_PrepareTitleButtonArabicText(titleButton, translatedQuestTitle, QTR_Font2, 13);
+  local translatedDisplayTitle = QTR_PrepareTitleButtonArabicText(titleButton, translatedQuestTitle, QTR_Font2, QTR_QuestLogEntryFontSize);
   local translatedDisplayText = QTR_GetTranslatedQuestLogButtonText(currentDisplayText, questTitle, translatedDisplayTitle);
   if (translatedDisplayText and translatedDisplayText ~= currentDisplayText) then
      QTR_QuestLogTitleButtonUpdateLock[titleButton] = true;
-     QTR_SetTitleButtonText(titleButton, translatedDisplayText, QTR_Font2, 13);
+     QTR_SetTitleButtonText(titleButton, translatedDisplayText, QTR_Font2, QTR_QuestLogEntryFontSize);
      QTR_QuestLogTitleButtonUpdateLock[titleButton] = nil;
      QTR_ResizeQuestLogTitleButton(titleButton);
   end
@@ -3911,8 +3964,9 @@ local function QTR_UpdateQuestLogInlineLabel(fontString, translatedText, origina
   QTR_GetExternalFontState(fontString, QTR_QuestLogFontState);
 
   local _, fontSize = fontString:GetFont();
+  local appliedSize = fallbackSize or fontSize or QTR_QuestLogActionButtonFontSize;
   if (translatedText and translatedText ~= "") then
-     QTR_SetShapedText(fontString, translatedText, fontName or QTR_Font2 or QTR_Font1 or Original_Font2, fontSize or fallbackSize or 13);
+     QTR_SetShapedText(fontString, translatedText, fontName or QTR_Font2 or QTR_Font1 or Original_Font2, appliedSize);
   else
      QTR_RestoreExternalFontState(fontString, QTR_QuestLogFontState);
      if (originalText ~= nil) then
@@ -3932,7 +3986,7 @@ local function QTR_UpdateQuestLogCenteredLabel(fontString, translatedText, origi
 
   if (translatedText and translatedText ~= "") then
      local appliedFont = fontName or QTR_Font1 or QTR_Font2 or Original_Font1;
-     local appliedSize = fontSize or fallbackSize or 13;
+     local appliedSize = fallbackSize or fontSize or QTR_QuestLogHeaderFontSize;
      local wrapWidth = (fontString.GetWidth and fontString:GetWidth()) or 0;
 
      fontString:SetFont(appliedFont, appliedSize, fontState and fontState.flags);
@@ -3967,10 +4021,24 @@ local function QTR_UpdateQuestLogButtonText(button, translatedText, originalText
 
   if (translatedText and translatedText ~= "") then
      button:SetText(translatedText);
-     QTR_SetShapedText(fontString, translatedText, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+     QTR_SetShapedText(fontString, translatedText, QTR_Font2 or QTR_Font1 or Original_Font2, QTR_QuestLogActionButtonFontSize);
   else
      QTR_RestoreExternalFontState(fontString, QTR_QuestLogFontState);
      button:SetText(originalText or "");
+  end
+end
+
+
+local function QTR_UpdateQuestLogShowMapButton(button, translatedText, originalText)
+  if (not button or not button.text) then
+     return;
+  end
+
+  local fontString = button.text;
+   QTR_UpdateQuestLogInlineLabel(fontString, translatedText, originalText, QTR_Font2 or QTR_Font1 or Original_Font2, QTR_QuestLogShowMapFontSize);
+
+  if (button.texture and button.SetWidth and fontString.GetStringWidth and button.texture.GetWidth) then
+     button:SetWidth(fontString:GetStringWidth() + button.texture:GetWidth());
   end
 end
 
@@ -3989,12 +4057,13 @@ local function QTR_UpdateQuestLogFrameLabels()
      translatedCountText = string.format("%s: %d/%d", QTR_Messages.questlogquests, numQuests or 0, maxQuests);
   end
 
-  QTR_UpdateQuestLogCenteredLabel(QuestLogTitleText, (showArabic and QTR_Messages and QTR_Messages.questlogtitle) or nil, QTR_MessOrig.questlogtitle, QTR_Font1 or QTR_Font2 or Original_Font1, 18);
-  QTR_UpdateQuestLogInlineLabel(QuestLogQuestCount, translatedCountText, nil, QTR_Font2 or QTR_Font1 or Original_Font2, 11);
-  QTR_UpdateQuestLogCenteredLabel(QuestLogNoQuestsText, (showArabic and QTR_Messages and QTR_Messages.noactivequests) or nil, QTR_MessOrig.noactivequests, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+   QTR_UpdateQuestLogCenteredLabel(QuestLogTitleText, (showArabic and QTR_Messages and QTR_Messages.questlogtitle) or nil, QTR_MessOrig.questlogtitle, QTR_Font1 or QTR_Font2 or Original_Font1, QTR_QuestLogHeaderFontSize);
+   QTR_UpdateQuestLogInlineLabel(QuestLogQuestCount, translatedCountText, nil, QTR_Font2 or QTR_Font1 or Original_Font2, QTR_QuestLogCountFontSize);
+   QTR_UpdateQuestLogCenteredLabel(QuestLogNoQuestsText, (showArabic and QTR_Messages and QTR_Messages.noactivequests) or nil, QTR_MessOrig.noactivequests, QTR_Font2 or QTR_Font1 or Original_Font2, QTR_QuestLogEmptyFontSize);
   QTR_UpdateQuestLogButtonText(QuestLogFrameAbandonButton, (showArabic and QTR_Messages and QTR_Messages.abandon) or nil, QTR_MessOrig.abandon);
   QTR_UpdateQuestLogButtonText(QuestLogFramePushQuestButton, (showArabic and QTR_Messages and QTR_Messages.share) or nil, QTR_MessOrig.share);
   QTR_UpdateQuestLogButtonText(QuestLogFrameTrackButton, (showArabic and QTR_Messages and QTR_Messages.track) or nil, QTR_MessOrig.track);
+   QTR_UpdateQuestLogShowMapButton(QuestLogFrameShowMapButton, (showArabic and QTR_Messages and QTR_Messages.showmap) or nil, QTR_MessOrig.showmap);
   QTR_UpdateQuestLogButtonText(QuestLogFrameCancelButton, (showArabic and QTR_Messages and QTR_Messages.close) or nil, QTR_MessOrig.close);
 end
 
@@ -4302,11 +4371,6 @@ function QTR_BlizzardOptions()
   QTROptions:SetScript("OnShow", function(self) QTR_SetCheckButtonState() end);
   QTROptions.name = "Arabic WoW-Quests";
   InterfaceOptions_AddCategory(QTROptions);
-
-  local QTR_OptionsTextWidth = 360;
-  local QTR_OptionsHeaderWidth = 420;
-  local QTR_OptionsTextRight = -40;
-  local QTR_OptionsCheckRight = QTR_OptionsTextRight + 12;
 
   local function QTR_SetOptionsCheckButtonText(checkButton, textRegion, text)
      textRegion:SetFont(QTR_Font2, 13);
@@ -5126,12 +5190,6 @@ end
 
 
 -- Set the gossip greeting text with explicit font and alignment.
-local QTR_GossipGreetingTextTargetWidth = 265;
-local QTR_GossipGreetingTextOffsetX = 10;
-local QTR_GossipGreetingTextOffsetY = -10;
-local QTR_GossipGreetingArabicOffsetX = -2;
-local QTR_GossipGreetingArabicExtraWidth = 4;
-local QTR_GossipGreetingWrapPadding = 18;
 local QTR_GreetingButtonFontState = setmetatable({}, { __mode = "k" });
 
 
@@ -5145,7 +5203,7 @@ local function QTR_EnsureGossipGreetingWidth(useArabicLayout)
    if (parentFrame and parentFrame.GetWidth) then
       local parentWidth = parentFrame:GetWidth();
       if (parentWidth and parentWidth > 0) then
-         local parentPadding = useArabicLayout and 15 or 20;
+         local parentPadding = useArabicLayout and QTR_GossipGreetingArabicParentPadding or QTR_GossipGreetingDefaultParentPadding;
          targetWidth = math.min(targetWidth, parentWidth - parentPadding);
       end
    end
@@ -5154,8 +5212,8 @@ local function QTR_EnsureGossipGreetingWidth(useArabicLayout)
       targetWidth = targetWidth + QTR_GossipGreetingArabicExtraWidth;
    end
 
-   if (targetWidth < 220) then
-      targetWidth = 220;
+   if (targetWidth < QTR_GossipGreetingMinWidth) then
+      targetWidth = QTR_GossipGreetingMinWidth;
    end
 
    GossipGreetingText:SetWidth(targetWidth);
@@ -5192,6 +5250,7 @@ end
 local function QTR_SetGossipGreetingText(text, fontName, fontSize, justify)
    local useArabicLayout = text and AS_ContainsArabic and AS_ContainsArabic(text);
    fontName = fontName or ((useArabicLayout and QTR_Font1) or Original_Font2);
+   fontSize = fontSize or QTR_GossipGreetingFontSize;
    QTR_EnsureGossipGreetingWidth(useArabicLayout);
    QTR_UpdateGossipGreetingAnchor(useArabicLayout);
    GossipGreetingText:SetFont(fontName, fontSize);
@@ -5211,8 +5270,8 @@ local function QTR_GetGossipGreetingWrapWidth()
    end
 
    wrapWidth = wrapWidth - QTR_GossipGreetingWrapPadding;
-   if (wrapWidth < 220) then
-      wrapWidth = 220;
+   if (wrapWidth < QTR_GossipGreetingMinWidth) then
+      wrapWidth = QTR_GossipGreetingMinWidth;
    end
 
    return wrapWidth;
@@ -5233,7 +5292,7 @@ local function QTR_UpdateGreetingGoodbyeButton(button, showArabic)
 
    if (showArabic and QTR_Messages and QTR_Messages.goodbye) then
       button:SetText(QTR_Messages.goodbye);
-      QTR_SetShapedText(fontString, QTR_Messages.goodbye, QTR_Font2 or QTR_Font1 or Original_Font2, 13);
+      QTR_SetShapedText(fontString, QTR_Messages.goodbye, QTR_Font2 or QTR_Font1 or Original_Font2, QTR_GreetingGoodbyeFontSize);
    else
       QTR_RestoreExternalFontState(fontString, QTR_GreetingButtonFontState);
       button:SetText(QTR_MessOrig.goodbye or GOODBYE or "Goodbye");
@@ -5247,14 +5306,11 @@ local function QTR_SetQuestGreetingText(text, fontName, fontSize, justify)
       return;
    end
 
+   fontSize = fontSize or QTR_QuestGreetingFontSize;
    GreetingText:SetText(text or "");
    GreetingText:SetFont(fontName, fontSize);
    GreetingText:SetJustifyH(justify or "LEFT");
 end
-
-
-local QTR_QuestGreetingTextTargetWidth = 320;
-
 
 QTR_EnsureQuestGreetingWidth = function()
    if (not GreetingText) then
@@ -5267,12 +5323,12 @@ QTR_EnsureQuestGreetingWidth = function()
    if (parentFrame and parentFrame.GetWidth) then
       local parentWidth = parentFrame:GetWidth();
       if (parentWidth and parentWidth > 0) then
-         targetWidth = math.min(targetWidth, parentWidth - 40);
+         targetWidth = math.min(targetWidth, parentWidth - QTR_QuestGreetingParentPadding);
       end
    end
 
-   if (targetWidth < 280) then
-      targetWidth = 280;
+   if (targetWidth < QTR_QuestGreetingMinWidth) then
+      targetWidth = QTR_QuestGreetingMinWidth;
    end
 
    GreetingText:SetWidth(targetWidth);
@@ -5281,25 +5337,25 @@ end
 
 QTR_SetQuestGreetingHeaders = function(showArabic)
    if (AvailableQuestsText) then
-      AvailableQuestsText:SetWidth(280);
+      AvailableQuestsText:SetWidth(QTR_QuestGreetingHeaderWidth);
    end
 
    if (showArabic) then
       if (CurrentQuestsText) then
-         QTR_SetShapedText(CurrentQuestsText, QTR_Messages.currquests, QTR_Font1, 18);
+         QTR_SetShapedText(CurrentQuestsText, QTR_Messages.currquests, QTR_Font1, QTR_QuestGreetingHeaderFontSize);
       end
       if (AvailableQuestsText) then
-         QTR_SetShapedText(AvailableQuestsText, QTR_Messages.avaiquests, QTR_Font1, 18);
+         QTR_SetShapedText(AvailableQuestsText, QTR_Messages.avaiquests, QTR_Font1, QTR_QuestGreetingHeaderFontSize);
       end
    else
       if (CurrentQuestsText) then
          CurrentQuestsText:SetText(QTR_MessOrig.currquests);
-         CurrentQuestsText:SetFont(Original_Font1, 18);
+         CurrentQuestsText:SetFont(Original_Font1, QTR_QuestGreetingHeaderFontSize);
          CurrentQuestsText:SetJustifyH("LEFT");
       end
       if (AvailableQuestsText) then
          AvailableQuestsText:SetText(QTR_MessOrig.avaiquests);
-         AvailableQuestsText:SetFont(Original_Font1, 18);
+         AvailableQuestsText:SetFont(Original_Font1, QTR_QuestGreetingHeaderFontSize);
          AvailableQuestsText:SetJustifyH("LEFT");
       end
    end
@@ -5976,17 +6032,17 @@ function GS_ON_OFF_QUEST()
 
    if (QTR_QuestGreetingState=="1") then
       QTR_QuestGreetingState="0";
-      QTR_SetQuestGreetingText(QTR_GS[QTR_QuestGreetingHash], Original_Font2, 13, "LEFT");
+      QTR_SetQuestGreetingText(QTR_GS[QTR_QuestGreetingHash], Original_Font2, QTR_QuestGreetingFontSize, "LEFT");
       QTR_SetQuestGreetingHeaders(false);
-      QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsEN, Original_Font2, 13);
+      QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsEN, Original_Font2, QTR_QuestButtonFontSize);
       QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, false);
       QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(QTR_QuestGreetingHash).."] EN");
    else
       QTR_QuestGreetingState="1";
-      local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[QTR_QuestGreetingHash], GreetingText:GetWidth(), 13, QTR_Font1);
-      QTR_SetQuestGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
+      local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[QTR_QuestGreetingHash], GreetingText:GetWidth(), QTR_QuestGreetingFontSize, QTR_Font1);
+      QTR_SetQuestGreetingText(Greeting_AR, QTR_Font1, QTR_QuestGreetingFontSize, "RIGHT");
       QTR_SetQuestGreetingHeaders(true);
-      QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsAR, QTR_Font1, 13);
+      QTR_RestoreGossipButtons(QTR_QuestGreetingButtonsAR, QTR_Font1, QTR_QuestButtonFontSize);
       QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, true);
       QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(QTR_QuestGreetingHash).."] AR");
    end
@@ -6019,8 +6075,8 @@ function QTR_QuestGreeting_Show()
       QTR_GS[Hash] = Greeting_Text;
       if ( GS_Gossip[Hash] ) then
          QTR_QuestGreetingState = "1";
-         local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[Hash], GreetingText:GetWidth(), 13, QTR_Font1);
-         QTR_SetQuestGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
+         local Greeting_AR = QTR_PrepareShownGossipDisplayText(GS_Gossip[Hash], GreetingText:GetWidth(), QTR_QuestGreetingFontSize, QTR_Font1);
+         QTR_SetQuestGreetingText(Greeting_AR, QTR_Font1, QTR_QuestGreetingFontSize, "RIGHT");
          QTR_UpdateGreetingGoodbyeButton(QuestFrameGreetingGoodbyeButton, true);
          QTR_ToggleButtonQG:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
          QTR_ToggleButtonQG:Enable();
@@ -6049,11 +6105,11 @@ function QTR_QuestGreeting_Show()
 
             local translatedQuestTitle = QTR_GetQuestTitleTranslation(questText);
             if (translatedQuestTitle) then
-               local questTitleAR = QTR_PrepareTitleButtonArabicText(questButton, translatedQuestTitle, QTR_Font1, 13);
+               local questTitleAR = QTR_PrepareTitleButtonArabicText(questButton, translatedQuestTitle, QTR_Font1, QTR_QuestButtonFontSize);
                local translatedQuestButtonText = prefix .. questTitleAR .. suffix;
                QTR_QuestGreetingButtonsEN[questButton] = questButton:GetText();
                QTR_QuestGreetingButtonsAR[questButton] = translatedQuestButtonText;
-               QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font1, 13);
+               QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font1, QTR_QuestButtonFontSize);
             end
          end
       end
@@ -6084,7 +6140,7 @@ function GS_ON_OFF()
          QTR_SuppressGossipRefreshHook = false;
       end
       QTR_RestoreVisibleGossipTitleButtons();
-      QTR_SetGossipGreetingText(originalGreetingText, Original_Font2, 13, "LEFT");
+      QTR_SetGossipGreetingText(originalGreetingText, Original_Font2, QTR_GossipGreetingFontSize, "LEFT");
       QTR_UpdateGreetingGoodbyeButton(GossipFrameGreetingGoodbyeButton, false);
       QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(curr_hash).."] EN");
    else                             -- show translation AR
@@ -6121,14 +6177,14 @@ function QTR_Gossip_Show()
                curr_goss = "0";
                showArabicGossip = false;
                QTR_RestoreVisibleGossipTitleButtons();
-               QTR_SetGossipGreetingText(Greeting_Text, Original_Font2, 13, "LEFT");
+               QTR_SetGossipGreetingText(Greeting_Text, Original_Font2, QTR_GossipGreetingFontSize, "LEFT");
                QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] EN");
             else
                curr_goss = "1";
                showArabicGossip = true;
                local Greeting_PL = GS_Gossip[Hash];
-               local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, QTR_GetGossipGreetingWrapWidth(), 13, QTR_Font1);
-               QTR_SetGossipGreetingText(Greeting_AR, QTR_Font1, 13, "RIGHT");
+               local Greeting_AR = QTR_PrepareShownGossipDisplayText(Greeting_PL, QTR_GetGossipGreetingWrapWidth(), QTR_GossipGreetingFontSize, QTR_Font1);
+               QTR_SetGossipGreetingText(Greeting_AR, QTR_Font1, QTR_GossipGreetingFontSize, "RIGHT");
                QTR_ToggleButtonGS:SetText("Gossip-Hash=["..tostring(Hash).."] AR");
             end
             QTR_ToggleButtonGS:Enable();
@@ -6156,12 +6212,12 @@ function QTR_Gossip_Show()
                end
                local translatedQuestTitle = QTR_GetQuestTitleTranslation(questText);
                if (translatedQuestTitle) then
-                  local questTitleAR = QTR_PrepareTitleButtonArabicText(questButton, translatedQuestTitle, QTR_Font1, 13);
+                  local questTitleAR = QTR_PrepareTitleButtonArabicText(questButton, translatedQuestTitle, QTR_Font1, QTR_QuestButtonFontSize);
                   local translatedQuestButtonText = prefix .. questTitleAR .. suffix;
                   QTR_GossipButtonsEN[questButton] = questButton:GetText();
                   QTR_GossipButtonsAR[questButton] = translatedQuestButtonText;
                   if (showArabicGossip) then
-                     QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font1, 13);
+                     QTR_SetTitleButtonText(questButton, translatedQuestButtonText, QTR_Font1, QTR_QuestButtonFontSize);
                   end
                end
             end
@@ -6176,11 +6232,11 @@ function QTR_Gossip_Show()
                      local Hash = StringHash(gostxt);
                      if ( GS_Gossip[Hash] ) then   -- translation of additional text exists
                         local optionWidth = QTR_GetGossipOptionWidth(titleButton);
-                        local Gossip_AR = QTR_PrepareGossipDisplayText(GS_Gossip[Hash], optionWidth, 13, QTR_Font1);
+                        local Gossip_AR = QTR_PrepareGossipDisplayText(GS_Gossip[Hash], optionWidth, QTR_GossipButtonFontSize, QTR_Font1);
                         QTR_GossipButtonsEN[titleButton] = gostxt;
                         QTR_GossipButtonsAR[titleButton] = Gossip_AR;
                         if (showArabicGossip) then
-                           QTR_SetTitleButtonText(titleButton, Gossip_AR, QTR_Font1, 13);
+                           QTR_SetTitleButtonText(titleButton, Gossip_AR, QTR_Font1, QTR_GossipButtonFontSize);
                         end
                      else
                         QTR_SaveHarvestedGossipText(Nazwa_NPC, Hash, gostxt);
