@@ -4,7 +4,7 @@
 -- WWW: https://github.com/3majed
 
 -- Global Variables
-local QTR_version = "1.0.0";
+local QTR_version = "1.1.0";
 local QTR_name = UnitName("player");
 local QTR_class= UnitClass("player");
 local QTR_race = UnitRace("player");

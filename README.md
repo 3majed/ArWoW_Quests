@@ -42,6 +42,13 @@ ArWoW Quests is a World of Warcraft (3.3.5a) addon that translates quest and gos
 	<img src="https://cdn.discordapp.com/attachments/956515329608151121/1507361629006725141/image.png?ex=6a119f69&is=6a104de9&hm=dbc54e8a44df895f972c09814139fde97e9b01e3cef522835d54d83fdc2aa61b&" alt="Questie screenshot 4" width="32%" />
 </p>
 
+### Tutorials
+
+<p align="center">
+	<img src="https://cdn.discordapp.com/attachments/956515329608151121/1507364576373506220/image.png?ex=6a11a228&is=6a1050a8&hm=a39896013db464969e4e60ac3d545a5b0d967f6539b15e86c8ab9c4eeaf0da44&" alt="Tutorials screenshot 1" width="32%" />
+	<img src="https://cdn.discordapp.com/attachments/956515329608151121/1507364622011727902/image.png?ex=6a11a233&is=6a1050b3&hm=1d21feb42787dc4493ac9e9cf60ebc65cf568947023b63b321e3ab25ef09c0fc&" alt="Tutorials screenshot 2" width="32%" />
+</p>
+
 <div dir="rtl" align="right">
 
 ## أهم المميزات
