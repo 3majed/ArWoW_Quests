@@ -50,6 +50,8 @@ local QTR_MessOrig = {
          arenateam5v5 = "5v5 Arena Team",
         costlabel = "Cost:",
          purchase = "Purchase",
+                accept = ACCEPT or "Accept",
+               decline = DECLINE or "Decline",
                 cancel = "Cancel",
             questlogtitle = "Quest Log",
           questlogquests = "Quests",
@@ -117,6 +119,7 @@ QTR_GossipGreetingFontSize = 13; -- gossip greeting body text size
 QTR_QuestGreetingFontSize = 13; -- quest greeting body text size
 QTR_QuestGreetingHeaderFontSize = 18; -- quest greeting header size
 QTR_GreetingGoodbyeFontSize = 13; -- goodbye button text size
+QTR_QuestOfferButtonFontSize = 13; -- accept/decline button text size
 QTR_QuestButtonFontSize = 13; -- translated quest choice button size
 QTR_GossipButtonFontSize = 13; -- translated gossip option button size
 local Tut_ID = 0;
@@ -2334,6 +2337,9 @@ local function QTR_GetExternalGossipBodyWrapWidth(fontString)
 end
 
 
+local QTR_SetExternalQuestBodyText;
+
+
 local function QTR_SetExternalGossipBodyText(fontString, translatedText, fontName, fontSize, skipRetry)
   if (not fontString) then
      return;
@@ -2349,6 +2355,19 @@ local function QTR_SetExternalGossipBodyText(fontString, translatedText, fontNam
   fontString:SetFont(fontName, fontSize);
   local wrapWidth = QTR_GetExternalGossipBodyWrapWidth(fontString);
   fontString:SetWidth(wrapWidth);
+
+  if (translatedText and AS_ContainsArabic and AS_ContainsArabic(translatedText) and QTR_SetExternalQuestBodyText and fontString.QueueTexts and fontString.SetToCurrentLine) then
+     QTR_SetExternalQuestBodyText(fontString, translatedText, fontName, fontSize);
+
+     if (not skipRetry and QTR_wait and wrapWidth <= 220) then
+        QTR_wait(0, function(targetFontString, targetText, targetFontName, targetFontSize)
+           if (targetFontString and targetFontString.IsShown and targetFontString:IsShown()) then
+              QTR_SetExternalGossipBodyText(targetFontString, targetText, targetFontName, targetFontSize, true);
+           end
+        end, fontString, translatedText, fontName, fontSize);
+     end
+     return;
+  end
 
   if (translatedText and AS_ContainsArabic and AS_ContainsArabic(translatedText)) then
      fontString:SetJustifyH("RIGHT");
@@ -2729,7 +2748,7 @@ local function QTR_GetExternalQuestBodyPageHeight(fontString)
 end
 
 
-local function QTR_SetExternalQuestBodyText(fontString, translatedText, fontName, fontSize)
+QTR_SetExternalQuestBodyText = function(fontString, translatedText, fontName, fontSize)
   if (not fontString) then
      return;
   end
@@ -2847,12 +2866,18 @@ function QTR_RestoreImmersionTalkingHead(frame, eventName, fallbackTitle, fallba
   local titleFontString = frame.TalkBox.NameFrame and frame.TalkBox.NameFrame.Name;
   if (titleFontString) then
      QTR_RestoreExternalFontState(titleFontString, QTR_ImmersionFontState);
+     if (titleFontString.SetJustifyH and (not AS_ContainsArabic or not AS_ContainsArabic(originalTitle or ""))) then
+        titleFontString:SetJustifyH("LEFT");
+     end
      titleFontString:SetText(originalTitle or "");
   end
 
   local bodyFontString = frame.TalkBox.TextFrame and frame.TalkBox.TextFrame.Text;
   if (bodyFontString) then
      QTR_RestoreExternalFontState(bodyFontString, QTR_ImmersionFontState);
+     if (bodyFontString.SetJustifyH and (not AS_ContainsArabic or not AS_ContainsArabic(originalBody or ""))) then
+        bodyFontString:SetJustifyH("LEFT");
+     end
      bodyFontString.qtrQuestPagingActive = nil;
      bodyFontString.qtrQuestOriginalText = nil;
      bodyFontString.qtrQuestFontName = nil;
@@ -2976,8 +3001,11 @@ function QTR_UpdateImmersionOptionButtons(buttonsFrame)
               end
            end
         else
-           button:SetText(originalText or "");
            QTR_RestoreExternalFontState(label, QTR_ImmersionFontState);
+           if (label.SetJustifyH and (not AS_ContainsArabic or not AS_ContainsArabic(originalText or ""))) then
+              label:SetJustifyH("LEFT");
+           end
+           button:SetText(originalText or "");
         end
 
         local buttonHeight = max(64, (label.GetHeight and label:GetHeight() or 0) + 28);
@@ -3253,6 +3281,7 @@ function QTR_TryHookImmersion()
         local translatedBody = QTR_GetExternalGossipBodyTranslation(text or "", true);
         if (translatedBody and translatedBody ~= "") then
            local bodyFontString = self.TalkBox.TextFrame.Text;
+           QTR_GetExternalFontState(bodyFontString, QTR_ImmersionFontState);
            local _, bodySize = bodyFontString:GetFont();
            QTR_SetExternalGossipBodyText(bodyFontString, translatedBody, QTR_Font1 or QTR_Font2 or Original_Font2, bodySize or 16);
         end
@@ -5081,12 +5110,44 @@ function QTR_split(str, c)
 end
 
 
+local QTR_QuestOfferButtonFontState = setmetatable({}, { __mode = "k" });
+
+
+local function QTR_UpdateQuestOfferButton(button, translatedText, originalText)
+  if (not button or not button.GetFontString) then
+     return;
+  end
+
+  local fontString = button:GetFontString();
+  if (not fontString) then
+     return;
+  end
+
+  QTR_GetExternalFontState(fontString, QTR_QuestOfferButtonFontState);
+
+  if (translatedText and translatedText ~= "") then
+     button:SetText(translatedText);
+     QTR_SetShapedText(fontString, translatedText, QTR_Font2 or QTR_Font1 or Original_Font2, QTR_QuestOfferButtonFontSize);
+  else
+     QTR_RestoreExternalFontState(fontString, QTR_QuestOfferButtonFontState);
+     button:SetText(originalText or "");
+  end
+end
+
+
+local function QTR_UpdateQuestOfferButtons(showArabic)
+  QTR_UpdateQuestOfferButton(QuestFrameAcceptButton, (showArabic and QTR_Messages and QTR_Messages.accept) or nil, QTR_MessOrig.accept);
+  QTR_UpdateQuestOfferButton(QuestFrameDeclineButton, (showArabic and QTR_Messages and QTR_Messages.decline) or nil, QTR_MessOrig.decline);
+end
+
+
 
 
 -- Restore Blizzard quest fonts, headings, and reward labels.
 function RestoreOriginalFonts()
   QuestInfoTitleHeader:SetFont(Original_Font1, 18);
    QuestInfoTitleHeader:SetJustifyH("LEFT");
+  QTR_UpdateQuestOfferButtons(false);
   QuestInfoDescriptionHeader:SetText(QTR_MessOrig.details);
   QuestInfoDescriptionHeader:SetFont(Original_Font1, 18);
    QuestInfoDescriptionHeader:SetJustifyH("LEFT");
@@ -5138,6 +5199,7 @@ end
 
 -- Replace live quest dialog text inside the Blizzard quest frame.
 function QTR_ChangeText_InEvent(QTR_event, str_id)
+   QTR_UpdateQuestOfferButtons(QTR_event=="QUEST_DETAIL");
   if (QTR_PS["transtitle"]=="1") then
    QTR_SetShapedTitleText(QuestInfoTitleHeader, QTR_GetTranslatedQuestTitleById(str_id), QTR_Font1, 18, QuestInfoTitleHeader:GetWidth());
    QTR_SetShapedTitleText(QuestProgressTitleText, QTR_GetTranslatedQuestTitleById(str_id), QTR_Font1, 18, QuestProgressTitleText:GetWidth());
