@@ -16,3 +16,9 @@ TutorialsData_AR.lua
 Arabic_Reshaper.lua
 
 ArWoW_Quests.lua
+Compatibility\Elvui.lua
+Compatibility\Questie.lua
+Compatibility\Immersion.lua
+Compatibility\StoryLine.lua
+Compatibility\Leatrix_Plus.lua
+Compatibility\QuestHelper.lua
