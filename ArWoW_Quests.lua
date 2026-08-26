@@ -2463,6 +2463,11 @@ local function QTR_InitializeRuntime()
   if (type(WorldMapFrame_UpdateQuests) == "function") then
      hooksecurefunc("WorldMapFrame_UpdateQuests", QTR_UpdateWorldMapQuestList);
   end
+  if (type(WorldMapQuestPOI_SetTooltip) == "function") then
+     hooksecurefunc("WorldMapQuestPOI_SetTooltip", function(poiButton, questLogIndex)
+        QTR_TranslateWorldMapPOITooltip(questLogIndex);
+     end);
+  end
   if (type(WatchFrame_Update) == "function") then
      hooksecurefunc("WatchFrame_Update", QTR_UpdateWatchFrame);
   end
@@ -2538,6 +2543,70 @@ end);
 
 
 -- Refresh translated world map quest text after the selected quest changes.
+local QTR_WorldMapPOITitleCache = {};
+
+
+-- Translate the Blizzard world map quest POI/blob tooltip title (built by WorldMapQuestPOI_SetTooltip);
+-- the questId comes from the quest log so it works even for quests missing from QuestList.
+function QTR_TranslateWorldMapPOITooltip(questLogIndex)
+  if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
+     return;
+  end
+  if (not questLogIndex or type(GetQuestLogTitle) ~= "function") then
+     return;
+  end
+  if (type(WorldMapTooltip) ~= "table" or type(WorldMapTooltip.GetName) ~= "function") then
+     return;
+  end
+
+  local tooltipName = WorldMapTooltip:GetName();
+  if (not tooltipName) then
+     return;
+  end
+  local titleFontString = _G[tooltipName .. "TextLeft1"];
+  if (not titleFontString or type(titleFontString.SetText) ~= "function" or type(titleFontString.GetText) ~= "function") then
+     return;
+  end
+
+  local displayTitle = titleFontString:GetText();
+  if (not displayTitle or displayTitle == "" or (AS_ContainsArabic and AS_ContainsArabic(displayTitle))) then
+     return;
+  end
+
+  local questId = select(9, GetQuestLogTitle(questLogIndex));
+  local _, fontSize, fontFlags = titleFontString:GetFont();
+  local cacheKey = tostring(questId or displayTitle) .. ":" .. tostring(fontSize or 0);
+  local reshapedTitle = QTR_WorldMapPOITitleCache[cacheKey];
+  if (reshapedTitle == false) then
+     return;
+  end
+  if (not reshapedTitle) then
+     local translatedTitle = nil;
+     if (questId) then
+        translatedTitle = QTR_GetTranslatedQuestTitleById(tostring(questId));
+     end
+     if (not translatedTitle or translatedTitle == "") then
+        translatedTitle = QTR_GetQuestTitleTranslation(displayTitle);
+     end
+     if (not translatedTitle or translatedTitle == "") then
+        QTR_WorldMapPOITitleCache[cacheKey] = false;
+        return;
+     end
+     reshapedTitle = QTR_PrepareWrappedArabicText(translatedTitle, 100000, QTR_Font2, fontSize or 12);
+     QTR_WorldMapPOITitleCache[cacheKey] = reshapedTitle;
+  end
+
+  titleFontString:SetFont(QTR_Font2, fontSize or 12, fontFlags);
+  if (titleFontString.SetJustifyH) then
+     titleFontString:SetJustifyH("RIGHT");
+  end
+  titleFontString:SetText(reshapedTitle);
+  if (type(WorldMapTooltip.Show) == "function") then
+     WorldMapTooltip:Show();
+  end
+end
+
+
 function QTR_WorldMapQuestFrameOnMouseUp(eventName)
   eventName = eventName or "WORLD_MAP_OnMouseUp";
   QTR_event = eventName;
@@ -2564,11 +2633,40 @@ local function QTR_ClearSavedTranslationCaches()
 end
 
 
+local function ArWoW_PrintSlashUsage()
+   if (DEFAULT_CHAT_FRAME and DEFAULT_CHAT_FRAME.AddMessage) then
+      DEFAULT_CHAT_FRAME:AddMessage("|cffffff00ArWoW:|r Usage: /ar quest clear or /ar chat clear");
+   end
+end
+
+
+local function ArWoW_RegisterSlashHandler(commandName, commandHandler)
+   if (type(ArWoW_SlashHandlers) ~= "table") then
+      ArWoW_SlashHandlers = {};
+   end
+   ArWoW_SlashHandlers[commandName] = commandHandler;
+   SlashCmdList.ARWOW = function(msg)
+      local text = string.lower(string.match(msg or "", "^%s*(.-)%s*$") or "");
+      local command, commandText = string.match(text, "^(%S+)%s*(.-)$");
+      if (command and ArWoW_SlashHandlers and ArWoW_SlashHandlers[command]) then
+         ArWoW_SlashHandlers[command](commandText or "");
+         return;
+      end
+      ArWoW_PrintSlashUsage();
+   end
+   SLASH_ARWOW1 = "/ar";
+end
+
+
 -- Open the addon options panel from the registered slash commands.
 function QTR_SlashCommand(msg)
    local command = string.lower(string.match(msg or "", "^%s*(.-)%s*$") or "");
    if (command == "clear") then
        QTR_ClearSavedTranslationCaches();
+       return;
+   end
+   if (command ~= "" and command ~= "options") then
+       QTR_AddLocalizedSystemMessage("|cffffff00ArWoW-Quests - ", "Usage: /ar quest clear");
        return;
    end
 
@@ -2581,9 +2679,7 @@ end
 function QTR:ADDON_LOADED(_, addon)
    if (addon == "ArWoW_Quests") then
        QTR_InitializeRuntime();
-     SlashCmdList["ArWoW_QUESTS"] = function(msg) QTR_SlashCommand(msg); end
-     SLASH_ArWoW_QUESTS1 = "/arwow-quests";
-     SLASH_ArWoW_QUESTS2 = "/qtr";
+     ArWoW_RegisterSlashHandler("quest", function(msg) QTR_SlashCommand(msg); end);
      QTR_CheckVars();
              QTR_TryHookElvUITracker();
             QTR_TryHookLeatrixPlus();

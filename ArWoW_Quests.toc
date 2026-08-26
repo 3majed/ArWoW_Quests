@@ -1,11 +1,10 @@
 ﻿## Interface: 30300
 ## Title: ArWoW_Quests
-## Version: 1.1.0
+## Version: 1.1.2
 ## Author: Majed
 ## DefaultState: Enabled
 ## LoadOnDemand: 0
-## SavedVariables: QTR_PS, QTR_SAVED, QTR_GOSSIP
-## SavedVariablesPerCharacter: QTR_PC
+## SavedVariables: QTR_PS, QTR_SAVED, QTR_GOSSIP, QTR_PC
 
 QuestData_AR_wotlk.lua
 QuestList.lua

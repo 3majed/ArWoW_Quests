@@ -59,12 +59,12 @@ ArWoW Quests is a World of Warcraft (3.3.5a) addon that translates quest and gos
 - **متوافق مع إضافات مهام مشهورة:** يدعم Questie في الـ tracker والـ tooltips، ويدعم ElvUI tracker، وImmersion، وStoryline.
 - **يدعم نوافذ إضافية مرتبطة بالمحتوى:** مثل TutorialFrame وبعض نوافذ الـ NPC الخاصة مثل Guild Registrar وArena Registrar.
 - **آمن على النصوص غير العربية أو غير المترجمة:** إذا ما لقى ترجمة مناسبة، يترك النص الأصلي كما هو بدل ما يعكسه أو يشوهه.
-- **إعدادات وأوامر مدمجة:** تقدر تفتح الإعدادات من Interface Options أو باستخدام `/qtr` و`/arwow-quests`، وتستخدم `/qtr clear` لمسح الكاشات المحلية المحفوظة.
+- **إعدادات وأوامر مدمجة:** تقدر تفتح الإعدادات من Interface Options أو باستخدام `/ar quest`، وتستخدم `/ar quest clear` لمسح الكاشات المحلية المحفوظة.
 
 ## مشاكل معروفة (كلاينت 3.3.5a)
 
 - **الترجمات الناقصة تظهر بالنص الأصلي:** إذا كانت المهمة أو جملة الـ Gossip غير موجودة في قاعدة الترجمة الحالية، ستظهر باللغة الأصلية الإنجليزية.
-- **مسح الكاش يحتاج إعادة تحميل:** الأمر `/qtr clear` يمسح `QTR_SAVED` و`QTR_GOSSIP`، لكن يفضل استخدام `/reload` بعدها حتى يثبت التغيير بشكل كامل.
+- **مسح الكاش يحتاج إعادة تحميل:** الأمر `/ar quest clear` يمسح `QTR_SAVED` و`QTR_GOSSIP`، لكن يفضل استخدام `/reload` بعدها حتى يثبت التغيير بشكل كامل.
 
 </div>
 
@@ -76,12 +76,12 @@ ArWoW Quests is a World of Warcraft (3.3.5a) addon that translates quest and gos
 - **Third-party addon integration:** Includes direct support for Questie (tracker and tooltips), ElvUI's tracker, Immersion, and Storyline.
 - **Additional UI support:** Also translates tutorial popups and selected NPC utility windows such as Guild Registrar and Arena Registrar dialogs.
 - **Safe fallback behavior:** When a translation is missing, the addon preserves the original English text instead of attempting to reshape or replace it incorrectly.
-- **Built-in settings and slash commands:** Open the addon options with `/qtr` or `/arwow-quests`, and use `/qtr clear` to clear locally saved translation caches.
+- **Built-in settings and slash commands:** Open the addon options with `/ar quest`, and use `/ar quest clear` to clear locally saved translation caches.
 
 ## Known Issues & Limitations
 
 - **Missing entries remain in English:** If a quest or gossip entry is not present in the current translation database, it will be shown in its original English form.
-- **Cache clearing should be followed by reload:** `/qtr clear` resets `QTR_SAVED` and `QTR_GOSSIP`, but you should run `/reload` afterward to persist the cleanup cleanly.
+- **Cache clearing should be followed by reload:** `/ar quest clear` resets `QTR_SAVED` and `QTR_GOSSIP`, but you should run `/reload` afterward to persist the cleanup cleanly.
 - **Targeted client version:** This addon is built for the Wrath 3.3.5a client (`30300`). Other client versions or API variants may require code changes.
 
 ## Credits & Acknowledgements

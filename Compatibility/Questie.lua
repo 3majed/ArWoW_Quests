@@ -142,14 +142,21 @@ function QTR_TryHookQuestieTracker()
      return false;
   end
 
-  if (not QTR_QuestieTrackerHooked and type(hooksecurefunc) == "function" and type(QuestieTracker.Initialize) == "function") then
-     hooksecurefunc(QuestieTracker, "Initialize", function()
+  if (not QTR_QuestieTrackerHooked and type(QuestieTracker.Initialize) == "function") then
+     -- QuestieTracker.Initialize runs inside Questie's init coroutine and yields
+     -- (TrackerLinePool.Initialize -> coYield). hooksecurefunc would wrap it in a C closure,
+     -- and yielding across that C-call boundary aborts Questie init with
+     -- "attempt to yield across metamethod/C-call boundary". A plain Lua wrapper keeps the
+     -- whole call chain in Lua so the coroutine can still yield.
+     local questieTrackerOriginalInitialize = QuestieTracker.Initialize;
+     QuestieTracker.Initialize = function(...)
+        questieTrackerOriginalInitialize(...);
         local _, hookedLinePool = QTR_GetQuestieTrackerModules();
         QTR_QuestieTrackerLabelsPatched = false;
         if (hookedLinePool) then
            QTR_PatchQuestieTrackerLines(hookedLinePool);
         end
-     end);
+     end;
      QTR_QuestieTrackerHooked = true;
   end
 
@@ -561,6 +568,22 @@ local function QTR_GetQuestieMapTooltipModules()
 end
 
 
+local function QTR_GetQuestieWrappedTextModule()
+  if (type(QuestieLoader) ~= "table" or type(QuestieLoader.ImportModule) ~= "function") then
+     return nil;
+  end
+
+  local wrappedTextOk, WrappedText = pcall(function()
+     return QuestieLoader:ImportModule("WrappedText");
+  end);
+  if (not wrappedTextOk or not WrappedText) then
+     return nil;
+  end
+
+  return WrappedText;
+end
+
+
 local function QTR_GetQuestieTooltipWrapWidth(tooltip)
   local width = 375;
   if (tooltip and tooltip.GetWidth) then
@@ -596,6 +619,13 @@ local function QTR_GetQuestieQuestTitleFromDb(QuestieDB, questId)
 end
 
 
+-- Quest titles are shaped on a single line (no wrapping) during the tooltip rebuild so GameTooltip
+-- measures the final RTL text and sizes to fit it, the same way the description lines already do.
+-- Width-based wrapping relied on FontString:GetWidth(), which is 0/stale while the tooltip is hidden
+-- during a Shift-toggle rebuild (QuestieEventHandler.ModifierStateChanged) and broke the RTL shaping.
+local QTR_QUESTIE_TITLE_NOWRAP_WIDTH = 100000;
+
+
 local function QTR_GetQuestieTooltipTranslatedTitleDisplay(tooltip, questId, displayText, originalTitle)
   if (not displayText or displayText == "") then
      return nil;
@@ -615,7 +645,7 @@ local function QTR_GetQuestieTooltipTranslatedTitleDisplay(tooltip, questId, dis
      return nil;
   end
 
-  local translatedDisplayText = QTR_PrepareExternalQuestTitleDisplay(questId, displayText, originalTitle or "", nil, QTR_Font2, 13, QTR_Font2, false);
+  local translatedDisplayText = QTR_PrepareExternalQuestTitleDisplay(questId, displayText, originalTitle or "", QTR_QUESTIE_TITLE_NOWRAP_WIDTH, QTR_Font2, 13, QTR_Font2, false);
   if (translatedDisplayText and translatedDisplayText ~= "" and tooltip) then
      tooltip.qtrQuestieTitleLineData = tooltip.qtrQuestieTitleLineData or {};
      local titleLineData = {
@@ -728,38 +758,6 @@ local function QTR_GetQuestieTooltipTranslatedDescription(questId)
 end
 
 
-local function QTR_GetQuestieTooltipTitleLineWidth(fontString, tooltip)
-  local titleWidth = nil;
-
-  if (fontString and fontString.GetWidth) then
-     titleWidth = fontString:GetWidth();
-  end
-
-  if ((not titleWidth or titleWidth < 40) and fontString and fontString.GetParent) then
-     local parentFrame = fontString:GetParent();
-     if (parentFrame and parentFrame.GetWidth) then
-        local parentWidth = parentFrame:GetWidth();
-        if (parentWidth and parentWidth > 60) then
-           titleWidth = parentWidth - 30;
-        end
-     end
-  end
-
-  if ((not titleWidth or titleWidth < 40) and tooltip and tooltip.GetWidth) then
-     local tooltipWidth = tooltip:GetWidth();
-     if (tooltipWidth and tooltipWidth > 60) then
-        titleWidth = tooltipWidth - 30;
-     end
-  end
-
-  if (not titleWidth or titleWidth < 40) then
-     titleWidth = 260;
-  end
-
-  return titleWidth;
-end
-
-
 local function QTR_FindQuestieTitleLineData(tooltip, fontText, lookupText)
   local titleDataMap = tooltip and tooltip.qtrQuestieTitleLineData;
   if (type(titleDataMap) ~= "table") then
@@ -806,25 +804,11 @@ local function QTR_UpdateQuestieTooltipFontString(fontString, tooltip)
   local texturePrefix, lookupText = QTR_ExtractLeadingTextureTags(fontText);
   local titleLineData = QTR_FindQuestieTitleLineData(tooltip, fontText, lookupText);
   if (titleLineData) then
-     local titleWidth = QTR_GetQuestieTooltipTitleLineWidth(fontString, tooltip);
-     if (texturePrefix ~= "") then
-        if (AS_TestLine == nil and AS_CreateTestLine) then
-           AS_CreateTestLine();
-        end
-        if (AS_TestLine and AS_TestLine.text) then
-           AS_TestLine.text:SetFont(QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
-           AS_TestLine.text:SetText(texturePrefix);
-           titleWidth = titleWidth - (AS_TestLine.text:GetStringWidth() or 0);
-           if (titleWidth < 40) then
-              titleWidth = QTR_GetQuestieTooltipTitleLineWidth(fontString, tooltip);
-           end
-        end
-     end
      local sourceDisplayText = titleLineData.displayText or lookupText or fontText;
      if (sourceDisplayText == titleLineData.originalTitle) then
         sourceDisplayText = lookupText or fontText;
      end
-     local shapedTitleText = QTR_PrepareExternalQuestTitleDisplay(titleLineData.questId, sourceDisplayText, titleLineData.originalTitle, titleWidth, QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, QTR_Font2 or fontState.font or Original_Font2, false);
+     local shapedTitleText = QTR_PrepareExternalQuestTitleDisplay(titleLineData.questId, sourceDisplayText, titleLineData.originalTitle, QTR_QUESTIE_TITLE_NOWRAP_WIDTH, QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, QTR_Font2 or fontState.font or Original_Font2, false);
      if (shapedTitleText and shapedTitleText ~= "") then
         fontString:SetFont(QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
         if (fontString.SetJustifyH) then
@@ -866,6 +850,69 @@ local function QTR_ApplyQuestieTooltipFonts(tooltip)
 end
 
 
+-- Questie's TooltipLayout and GameTooltip measure line widths in the shared tooltip font objects,
+-- but Arabic renders in QTR_Font2 only in the post-pass, so titles were sized in the wrong font and
+-- overflowed. Swap those objects to QTR_Font2 for the rebuild (re-inheriting lines a previous pass
+-- set explicitly) so the native layout sizes RTL text correctly; restore right after.
+local function QTR_BeginQuestieTooltipRenderFont(tooltip)
+  if (not QTR_Font2 or not QTR_PS or QTR_PS["active"] ~= "1") then
+     return nil;
+  end
+
+  local tooltipName = tooltip and tooltip.GetName and tooltip:GetName();
+  if (tooltipName) then
+     local lineIndex = 1;
+     while (lineIndex <= 100) do
+        local leftFontString = _G[tooltipName .. "TextLeft" .. lineIndex];
+        local rightFontString = _G[tooltipName .. "TextRight" .. lineIndex];
+        if (not leftFontString and not rightFontString) then
+           break;
+        end
+        local fontObject = _G[(lineIndex == 1) and "GameTooltipHeaderText" or "GameTooltipText"];
+        if (fontObject) then
+           if (leftFontString and leftFontString.SetFontObject) then
+              pcall(leftFontString.SetFontObject, leftFontString, fontObject);
+           end
+           if (rightFontString and rightFontString.SetFontObject) then
+              pcall(rightFontString.SetFontObject, rightFontString, fontObject);
+           end
+        end
+        lineIndex = lineIndex + 1;
+     end
+  end
+
+  local saved = {};
+  local objectNames = { "GameTooltipHeaderText", "GameTooltipText" };
+  for _, name in ipairs(objectNames) do
+     local fontObject = _G[name];
+     if (fontObject and type(fontObject.GetFont) == "function" and type(fontObject.SetFont) == "function") then
+        local fontPath, fontSize, fontFlags = fontObject:GetFont();
+        if (fontPath) then
+           saved[#saved + 1] = { object = fontObject, path = fontPath, size = fontSize, flags = fontFlags };
+           fontObject:SetFont(QTR_Font2, fontSize or 13, fontFlags);
+        end
+     end
+  end
+
+  if (#saved == 0) then
+     return nil;
+  end
+  return saved;
+end
+
+
+local function QTR_EndQuestieTooltipRenderFont(saved)
+  if (type(saved) ~= "table") then
+     return;
+  end
+  for _, entry in ipairs(saved) do
+     if (entry.object and type(entry.object.SetFont) == "function") then
+        entry.object:SetFont(entry.path, entry.size, entry.flags);
+     end
+  end
+end
+
+
 local function QTR_WrapQuestieMapTooltipRebuild(tooltip, QuestieDB, QuestieLib)
   if (not tooltip or type(tooltip._Rebuild) ~= "function") then
      return false;
@@ -875,6 +922,9 @@ local function QTR_WrapQuestieMapTooltipRebuild(tooltip, QuestieDB, QuestieLib)
   end
 
   local originalRebuild = tooltip._Rebuild;
+  -- The Shift-expanded quest description is wrapped by WrappedText:TextWrap (TooltipLayout),
+  -- not QuestieLib.TextWrap, so hook that module to apply Arabic reshaping/RTL to the body text.
+  local WrappedText = QTR_GetQuestieWrappedTextModule();
   local wrappedRebuild = function(self)
      local savedQuestData = {};
      local originalGetColoredQuestName = nil;
@@ -913,9 +963,9 @@ local function QTR_WrapQuestieMapTooltipRebuild(tooltip, QuestieDB, QuestieLib)
 
         QTR_PrimeQuestieNextChainTitleData(self, QuestieDB);
 
-        if (QuestieLib and type(QuestieLib.TextWrap) == "function") then
-           originalTextWrap = QuestieLib.TextWrap;
-           QuestieLib.TextWrap = function(libSelf, line, prefix, combineTrailing, desiredWidth)
+        if (WrappedText and type(WrappedText.TextWrap) == "function") then
+           originalTextWrap = WrappedText.TextWrap;
+           WrappedText.TextWrap = function(libSelf, line, prefix, combineTrailing, desiredWidth, fontSource)
               if (type(line) == "string" and line ~= "" and AS_ContainsArabic and AS_ContainsArabic(line)) then
                  local wrappedText = QTR_PrepareWrappedArabicText(line, desiredWidth or QTR_GetQuestieTooltipWrapWidth(self), QTR_Font2, 13);
                  local wrappedLines = QTR_SplitMultilineText(wrappedText);
@@ -930,7 +980,7 @@ local function QTR_WrapQuestieMapTooltipRebuild(tooltip, QuestieDB, QuestieLib)
                  return outputLines;
               end
 
-              return originalTextWrap(libSelf, line, prefix, combineTrailing, desiredWidth);
+              return originalTextWrap(libSelf, line, prefix, combineTrailing, desiredWidth, fontSource);
            end;
         end
 
@@ -954,13 +1004,15 @@ local function QTR_WrapQuestieMapTooltipRebuild(tooltip, QuestieDB, QuestieLib)
         end
      end
 
+     local qtrRenderFonts = QTR_BeginQuestieTooltipRenderFont(self);
      local rebuildOk, rebuildErr = pcall(originalRebuild, self);
+     QTR_EndQuestieTooltipRenderFont(qtrRenderFonts);
 
      if (originalGetColoredQuestName) then
         QuestieLib.GetColoredQuestName = originalGetColoredQuestName;
      end
      if (originalTextWrap) then
-        QuestieLib.TextWrap = originalTextWrap;
+        WrappedText.TextWrap = originalTextWrap;
      end
      for questData, savedData in pairs(savedQuestData) do
         questData.title = savedData.title;
@@ -1092,8 +1144,19 @@ function QTR_TryHookQuestieMapTooltips()
         return;
      end
      if (QTR_PS and QTR_PS["active"] == "1") then
-        QTR_PrimeQuestieTooltipTitleData(tooltip, QuestieDB, QuestieLib);
-        QTR_ApplyQuestieTooltipFonts(tooltip);
+        -- MapIconTooltip:Show redefines and calls _Rebuild before this post-hook, so the first
+        -- render ran unwrapped (untranslated). With Shift held the details are already shown, so
+        -- clear and re-run the now-wrapped _Rebuild to translate the description too.
+        if (IsShiftKeyDown() and type(tooltip.ClearLines) == "function") then
+           tooltip:ClearLines();
+           tooltip:_Rebuild();
+           if (type(tooltip.Show) == "function") then
+              tooltip:Show();
+           end
+        else
+           QTR_PrimeQuestieTooltipTitleData(tooltip, QuestieDB, QuestieLib);
+           QTR_ApplyQuestieTooltipFonts(tooltip);
+        end
      end
   end);
 
