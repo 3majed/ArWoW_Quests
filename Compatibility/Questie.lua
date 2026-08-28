@@ -783,6 +783,34 @@ local function QTR_FindQuestieTitleLineData(tooltip, fontText, lookupText)
 end
 
 
+local QTR_QUESTIE_NEXT_IN_CHAIN_TEXT = "التالي في السلسلة:";
+
+
+-- Questie prefixes the "Next in chain:" label with a chain-icon texture and leading spaces, so the
+-- shared texture-tag helper can't strip it; peel the texture/whitespace here to match the label.
+-- The label's grey AddLine color isn't readable via GetTextColor at this post-pass (it applies on
+-- Show), so re-apply Questie's 0.86 grey as an inline escape so the text isn't left white.
+local function QTR_GetQuestieNextInChainTranslation(fontText)
+  if (not fontText or fontText == "") then
+     return nil;
+  end
+
+  local texturePrefix = string.match(fontText, "^(%s*|T.-|t%s*)") or "";
+  local labelText = string.gsub(string.sub(fontText, string.len(texturePrefix) + 1), "^%s*(.-)%s*$", "%1");
+  if (labelText ~= "Next in chain:") then
+     return nil;
+  end
+
+  local reshapedText = QTR_PrepareWrappedArabicText(QTR_QUESTIE_NEXT_IN_CHAIN_TEXT, QTR_QUESTIE_TITLE_NOWRAP_WIDTH, QTR_Font2, 13);
+  if (not reshapedText or reshapedText == "") then
+     reshapedText = QTR_QUESTIE_NEXT_IN_CHAIN_TEXT;
+  end
+
+  return texturePrefix .. "|cffdbdbdb" .. reshapedText .. "|r";
+end
+
+
+
 local function QTR_UpdateQuestieTooltipFontString(fontString, tooltip)
   if (not fontString or not fontString.GetText or not fontString.GetFont or not fontString.SetFont) then
      return;
@@ -819,6 +847,18 @@ local function QTR_UpdateQuestieTooltipFontString(fontString, tooltip)
      end
   end
 
+  if (QTR_PS and QTR_PS["active"] == "1") then
+     local nextInChainText = QTR_GetQuestieNextInChainTranslation(fontText);
+     if (nextInChainText) then
+        fontString:SetFont(QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
+        if (fontString.SetJustifyH) then
+           fontString:SetJustifyH("RIGHT");
+        end
+        fontString:SetText(nextInChainText);
+        return;
+     end
+  end
+
   if (fontText ~= "" and AS_ContainsArabic and AS_ContainsArabic(fontText)) then
      fontString:SetFont(QTR_Font2 or fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
      if (fontString.SetJustifyH) then
@@ -843,9 +883,42 @@ local function QTR_ApplyQuestieTooltipFonts(tooltip)
      return;
   end
 
-  for lineIndex = 1, (tooltip:NumLines() or 0) do
+  local numLines = tooltip:NumLines() or 0;
+  for lineIndex = 1, numLines do
      QTR_UpdateQuestieTooltipFontString(_G[tooltipName .. "TextLeft" .. lineIndex], tooltip);
      QTR_UpdateQuestieTooltipFontString(_G[tooltipName .. "TextRight" .. lineIndex], tooltip);
+  end
+
+  -- GameTooltip's left FontStrings auto-size to their text, so SetJustifyH("RIGHT") stays invisible
+  -- and wrapped Arabic body lines keep their short trailing line on the left. Stretch single-column
+  -- Arabic lines to the widest left line so they right-align to a shared right edge.
+  if (QTR_PS and QTR_PS["active"] == "1") then
+     local maxLeftWidth = 0;
+     for lineIndex = 1, numLines do
+        local leftFontString = _G[tooltipName .. "TextLeft" .. lineIndex];
+        if (leftFontString and leftFontString.GetStringWidth) then
+           local lineWidth = leftFontString:GetStringWidth() or 0;
+           if (lineWidth > maxLeftWidth) then
+              maxLeftWidth = lineWidth;
+           end
+        end
+     end
+
+     if (maxLeftWidth > 0) then
+        for lineIndex = 1, numLines do
+           local leftFontString = _G[tooltipName .. "TextLeft" .. lineIndex];
+           local rightFontString = _G[tooltipName .. "TextRight" .. lineIndex];
+           local rightText = rightFontString and rightFontString.GetText and rightFontString:GetText();
+           local leftText = leftFontString and leftFontString.GetText and leftFontString:GetText();
+           if (leftFontString and leftFontString.SetWidth and leftText and leftText ~= "" and (not rightText or rightText == "")
+              and AS_ContainsArabic and AS_ContainsArabic(leftText)) then
+              leftFontString:SetWidth(maxLeftWidth);
+              if (leftFontString.SetJustifyH) then
+                 leftFontString:SetJustifyH("RIGHT");
+              end
+           end
+        end
+     end
   end
 end
 
@@ -1132,7 +1205,7 @@ function QTR_TryHookQuestieMapTooltips()
   end
 
   hooksecurefunc(MapIconTooltip, "Show", function(iconFrame)
-     if (not iconFrame or iconFrame.miniMapIcon) then
+     if (not iconFrame) then
         return;
      end
 

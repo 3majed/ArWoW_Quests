@@ -21,3 +21,4 @@ Compatibility\Immersion.lua
 Compatibility\StoryLine.lua
 Compatibility\Leatrix_Plus.lua
 Compatibility\QuestHelper.lua
+Compatibility\DFUI.lua

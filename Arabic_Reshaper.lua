@@ -800,9 +800,28 @@ end
 -------------------------------------------------------------------------------------------------------
 -- the function prepares Arabic text to be displayed in a specific window width
 
+-- Memoized by font/size/width/text: this routine reshapes and measures a font string inside a
+-- per-character loop, so recomputing it on every quest-log / world-map repaint is the main source
+-- of stutter and garbage. Nested tables avoid building a key string on lookups.
+local AS_LineCache = {};
+local AS_LineCacheN = 0;
+
 function AS_ReverseAndPrepareLineText(Atext, Awidth, Afont, AfontSize)
    local retstr = "";
    if (Atext and Awidth and AfontSize) then
+      local fontKey = Afont or QTR_Font2 or "";
+      local widthKey = math.floor(Awidth + 0.5);
+      local fontBucket = AS_LineCache[fontKey];
+      if (not fontBucket) then fontBucket = {}; AS_LineCache[fontKey] = fontBucket; end
+      local sizeBucket = fontBucket[AfontSize];
+      if (not sizeBucket) then sizeBucket = {}; fontBucket[AfontSize] = sizeBucket; end
+      local widthBucket = sizeBucket[widthKey];
+      if (not widthBucket) then widthBucket = {}; sizeBucket[widthKey] = widthBucket; end
+      local cached = widthBucket[Atext];
+      if (cached ~= nil) then
+         return cached;
+      end
+
       if (AS_TestLine == nil) then -- a own frame for displaying the translation of texts and determining the length
          AS_CreateTestLine();
       end
@@ -857,6 +876,21 @@ function AS_ReverseAndPrepareLineText(Atext, Awidth, Afont, AfontSize)
       retstr = string.gsub(retstr, "#", "");
       retstr = string.gsub(retstr, " \n", "\n"); -- space before newline code is useless
       retstr = string.gsub(retstr, "\n ", "\n"); -- space after newline code is useless
+
+      local fontKey = Afont or QTR_Font2 or "";
+      local widthKey = math.floor(Awidth + 0.5);
+      if (AS_LineCacheN >= 400) then
+         AS_LineCache = {};
+         AS_LineCacheN = 0;
+      end
+      local fontBucket = AS_LineCache[fontKey];
+      if (not fontBucket) then fontBucket = {}; AS_LineCache[fontKey] = fontBucket; end
+      local sizeBucket = fontBucket[AfontSize];
+      if (not sizeBucket) then sizeBucket = {}; fontBucket[AfontSize] = sizeBucket; end
+      local widthBucket = sizeBucket[widthKey];
+      if (not widthBucket) then widthBucket = {}; sizeBucket[widthKey] = widthBucket; end
+      widthBucket[Atext] = retstr;
+      AS_LineCacheN = AS_LineCacheN + 1;
    end
 
    return retstr;

@@ -271,12 +271,29 @@ end
 
 
 -- Reverse Arabic text only when the content actually needs RTL shaping.
+-- Blizzard repaints the quest log several times per open, each re-reshaping the same strings.
+-- Memoize by input text (output depends only on it) to kill the repeated CPU + garbage.
+-- Globals (not locals) so as not to add to this file's near-200 local count.
+QTR_ReverseTextCache = {};
+QTR_ReverseTextCacheN = 0;
+
 local function QTR_ReverseText(text)
   if (not text or text == "") then
      return text or "";
   end
   if (AS_ContainsArabic and AS_ContainsArabic(text)) then
-     return AS_UTF8reverse(text);
+     local cached = QTR_ReverseTextCache[text];
+     if (cached ~= nil) then
+        return cached;
+     end
+     local result = AS_UTF8reverse(text);
+     if (QTR_ReverseTextCacheN >= 500) then
+        QTR_ReverseTextCache = {};
+        QTR_ReverseTextCacheN = 0;
+     end
+     QTR_ReverseTextCache[text] = result;
+     QTR_ReverseTextCacheN = QTR_ReverseTextCacheN + 1;
+     return result;
   end
   return text;
 end
@@ -505,18 +522,44 @@ end
 
 
 -- Normalize multiline quest text before feeding it into the RTL line shaper.
+-- Memoized per (limit, input text); see QTR_ReverseText for why. Global to avoid the local limit.
+QTR_ReverseBodyCache = {};
+QTR_ReverseBodyCacheN = 0;
+
 local function QTR_ReverseBodyText(text, limit)
   if (not text or text == "") then
      return text or "";
   end
-  text = QTR_ResolveGenderPlaceholders(text);
-  if (not AS_ContainsArabic or not AS_ContainsArabic(text)) then
-     return text;
+  local cacheForLimit = QTR_ReverseBodyCache[limit or 0];
+  if (not cacheForLimit) then
+     cacheForLimit = {};
+     QTR_ReverseBodyCache[limit or 0] = cacheForLimit;
   end
-  text = string.gsub(text, "\r\n", "\n");
-  text = string.gsub(text, "\r", "\n");
-  text = string.gsub(text, "\n", "#");
-  return QTR_LineReverse(text, limit);
+  local cached = cacheForLimit[text];
+  if (cached ~= nil) then
+     return cached;
+  end
+
+  local processed = QTR_ResolveGenderPlaceholders(text);
+  local result;
+  if (not AS_ContainsArabic or not AS_ContainsArabic(processed)) then
+     result = processed;
+  else
+     processed = string.gsub(processed, "\r\n", "\n");
+     processed = string.gsub(processed, "\r", "\n");
+     processed = string.gsub(processed, "\n", "#");
+     result = QTR_LineReverse(processed, limit);
+  end
+
+  if (QTR_ReverseBodyCacheN >= 300) then
+     QTR_ReverseBodyCache = {};
+     cacheForLimit = {};
+     QTR_ReverseBodyCache[limit or 0] = cacheForLimit;
+     QTR_ReverseBodyCacheN = 0;
+  end
+  cacheForLimit[text] = result;
+  QTR_ReverseBodyCacheN = QTR_ReverseBodyCacheN + 1;
+  return result;
 end
 
 
@@ -2190,12 +2233,12 @@ function QTR_BlizzardOptions()
 
   local QTRCheckButton0 = CreateFrame("CheckButton", "QTRCheckButton0", QTROptions, "OptionsCheckButtonTemplate");
    QTR_SetOptionsCheckButtonPoint(QTRCheckButton0, QTROptionsModeInfo, false, -10);
-   QTRCheckButton0:SetScript("OnClick", function(self) if (QTR_PS["active"]=="1") then QTR_PS["active"]="0" else QTR_PS["active"]="1" end; QTR_UpdateQuestLogToggleButtonText(); QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); QTR_RefreshQuestieTracker(); QTR_RefreshQuestieArrow(); QTR_RefreshQuestHelperTracker(); QTR_RefreshImmersionLiveView(); QTR_RefreshStorylineLiveView(); end);
+   QTRCheckButton0:SetScript("OnClick", function(self) if (QTR_PS["active"]=="1") then QTR_PS["active"]="0" else QTR_PS["active"]="1" end; QTR_UpdateQuestLogToggleButtonText(); QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); QTR_RefreshQuestieTracker(); QTR_RefreshQuestieArrow(); QTR_RefreshQuestHelperTracker(); QTR_RefreshImmersionLiveView(); QTR_RefreshStorylineLiveView(); QTR_RefreshDFUIWorldMap(); end);
   QTR_SetOptionsCheckButtonText(QTRCheckButton0, QTRCheckButton0Text, QTR_ReverseText(QTR_Interface.active));
   
   local QTRCheckButton3 = CreateFrame("CheckButton", "QTRCheckButton3", QTROptions, "OptionsCheckButtonTemplate");
    QTR_SetOptionsCheckButtonPoint(QTRCheckButton3, QTRCheckButton0, true, -10);
-   QTRCheckButton3:SetScript("OnClick", function(self) if (QTR_PS["transtitle"]=="0") then QTR_PS["transtitle"]="1" else QTR_PS["transtitle"]="0" end; QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); QTR_RefreshQuestieTracker(); QTR_RefreshQuestieArrow(); QTR_RefreshQuestHelperTracker(); QTR_RefreshImmersionLiveView(); QTR_RefreshStorylineLiveView(); end);
+   QTRCheckButton3:SetScript("OnClick", function(self) if (QTR_PS["transtitle"]=="0") then QTR_PS["transtitle"]="1" else QTR_PS["transtitle"]="0" end; QTR_RefreshWorldMapQuestList(); QTR_RefreshWatchFrame(); QTR_RefreshQuestieTracker(); QTR_RefreshQuestieArrow(); QTR_RefreshQuestHelperTracker(); QTR_RefreshImmersionLiveView(); QTR_RefreshStorylineLiveView(); QTR_RefreshDFUIWorldMap(); end);
   QTR_SetOptionsCheckButtonText(QTRCheckButton3, QTRCheckButton3Text, QTR_ReverseText(QTR_Interface.transtitle));
   
   local QTRCheckButtonGossip = CreateFrame("CheckButton", "QTRCheckButtonGossip", QTROptions, "OptionsCheckButtonTemplate");
@@ -2477,6 +2520,7 @@ local function QTR_InitializeRuntime()
    QTR_TryHookQuestHelperTracker();
   QTR_TryHookImmersion();
   QTR_TryHookStoryline();
+  QTR_TryHookDFUI();
   QTR_TryHookQuestieMapTooltips();
   QTR_TryHookQuestieUnitTooltips();
   if (TutorialFrame) then
@@ -2517,6 +2561,7 @@ QTR_EventFrame:SetScript("OnEvent", function(self, event, ...)
      QTR_TryHookLeatrixPlus();
      QTR_TryHookImmersion();
      QTR_TryHookStoryline();
+     QTR_TryHookDFUI();
      if (addon and string.find(addon, "^Questie")) then
         QTR_TryHookQuestieMapTooltips();
         QTR_TryHookQuestieUnitTooltips();
@@ -4287,10 +4332,21 @@ function Tut_TutorialShowDelayed()
 end
 
 
+-- Player name/class/race/sex are fixed for the session, so a given input always expands the same.
+-- Memoize (global, to avoid the local limit) to skip ~40 gsubs on every title/body translation.
+QTR_ExpandCache = {};
+QTR_ExpandCacheN = 0;
+
 -- Expand quest placeholders for names, gender, class, and race tokens.
 function QTR_ExpandUnitInfo(msg)
    if (not msg or msg == "") then
       return msg or "";
+   end
+
+   local input = msg;
+   local cached = QTR_ExpandCache[input];
+   if (cached ~= nil) then
+      return cached;
    end
 
    msg = string.gsub(msg, "%$[bB]", "\n");
@@ -4366,6 +4422,13 @@ function QTR_ExpandUnitInfo(msg)
       msg = string.gsub(msg, "YOUR_RACE", player_race.W1);                        -- Vocative - remaining occurrences
       msg = string.gsub(msg, "YOUR_CLASS", player_class.W1);                      -- Vocative - remaining occurrences
    end
+
+   if (QTR_ExpandCacheN >= 1500) then
+      QTR_ExpandCache = {};
+      QTR_ExpandCacheN = 0;
+   end
+   QTR_ExpandCache[input] = msg;
+   QTR_ExpandCacheN = QTR_ExpandCacheN + 1;
 
   return msg;
 end
