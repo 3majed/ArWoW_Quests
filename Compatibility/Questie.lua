@@ -31,6 +31,54 @@ local function QTR_GetQuestieTrackerModules()
 end
 
 
+-- Questie tracker status lines the addon writes as colored English; reshape to Arabic in place.
+local QTR_QUESTIE_TRACKER_STATUS_TEXT = {
+  ["Quest Complete!"] = "اكتملت المهمة!",
+  ["Quest Failed!"] = "فشلت المهمة!",
+};
+
+
+local function QTR_TranslateQuestieTrackerStatusText(text)
+  if (type(text) ~= "string" or text == "") then
+     return nil;
+  end
+
+  local strippedText = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "");
+  strippedText = string.gsub(strippedText, "|r", "");
+  strippedText = string.gsub(strippedText, "^%s*(.-)%s*$", "%1");
+
+  local arabicText = QTR_QUESTIE_TRACKER_STATUS_TEXT[strippedText];
+  if (not arabicText) then
+     return nil;
+  end
+
+  local colorPrefix = string.match(text, "^(|c%x%x%x%x%x%x%x%x)") or "";
+  local colorSuffix = (colorPrefix ~= "") and "|r" or "";
+  local reshapedText = QTR_PrepareWrappedArabicText(arabicText, nil, QTR_Font1 or QTR_Font2, 13);
+  return colorPrefix .. reshapedText .. colorSuffix;
+end
+
+
+-- A minimized quest keeps its title but gets a "(Complete)"/"(Failed)" suffix from GetColoredQuestName;
+-- the title reshaper preserves that suffix verbatim, so translate it in the display text beforehand.
+local function QTR_TranslateQuestieTrackerCompletionSuffix(displayText, fontName, fontSize)
+  if (type(displayText) ~= "string" or displayText == "") then
+     return displayText;
+  end
+
+  if (string.find(displayText, "(Complete)", 1, true)) then
+     local reshapedText = QTR_PrepareWrappedArabicText("مكتملة", nil, fontName, fontSize);
+     displayText = string.gsub(displayText, "%(Complete%)", "(" .. reshapedText .. ")");
+  end
+  if (string.find(displayText, "(Failed)", 1, true)) then
+     local reshapedText = QTR_PrepareWrappedArabicText("فشلت", nil, fontName, fontSize);
+     displayText = string.gsub(displayText, "%(Failed%)", "(" .. reshapedText .. ")");
+  end
+
+  return displayText;
+end
+
+
 local function QTR_PatchQuestieTrackerLabel(label)
   if (not label or label.qtrQuestieTrackerPatched) then
      return true;
@@ -50,6 +98,19 @@ local function QTR_PatchQuestieTrackerLabel(label)
      if (not state) then
         state = {};
         QTR_QuestieTrackerLabelState[self] = state;
+     end
+
+     if (not state.lock and QTR_PS and QTR_PS["active"] == "1") then
+        local statusText = QTR_TranslateQuestieTrackerStatusText(text);
+        if (statusText) then
+           state.displayText = nil;
+           local _, statusFontSize, statusFontOutline = self:GetFont();
+           state.lock = true;
+           originalSetFont(self, QTR_Font1 or QTR_Font2, statusFontSize or 13, statusFontOutline);
+           originalSetText(self, statusText);
+           state.lock = false;
+           return;
+        end
      end
 
      if (not state.lock and line and line.mode == "quest" and line.Quest) then
@@ -93,7 +154,8 @@ local function QTR_PatchQuestieTrackerLabel(label)
 
      local translatedText = nil;
      if (QTR_PrepareExternalQuestTitleDisplay) then
-        translatedText = QTR_PrepareExternalQuestTitleDisplay(line.Quest.Id, state.displayText, questTitle, width, arabicFont, defaultFontSize or 13, defaultFont or arabicFont);
+        local displayText = QTR_TranslateQuestieTrackerCompletionSuffix(state.displayText, arabicFont, defaultFontSize or 13);
+        translatedText = QTR_PrepareExternalQuestTitleDisplay(line.Quest.Id, displayText, questTitle, width, arabicFont, defaultFontSize or 13, defaultFont or arabicFont);
      end
      if (not translatedText or translatedText == "" or translatedText == state.displayText) then
         return;
@@ -1130,7 +1192,8 @@ local function QTR_TranslateQuestieUnitTooltipLines(key, tooltipLines, QuestieTo
   if (not key or type(tooltipLines) ~= "table") then
      return tooltipLines;
   end
-  if (string.find(key, "^m_") == nil) then
+  -- m_ = NPC/monster, i_ = item (bag/loot), o_ = world object tooltips.
+  if (string.find(key, "^m_") == nil and string.find(key, "^i_") == nil and string.find(key, "^o_") == nil) then
      return tooltipLines;
   end
   if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
@@ -1174,7 +1237,9 @@ local function QTR_TranslateQuestieUnitTooltipLines(key, tooltipLines, QuestieTo
      if (type(tooltipLine) == "string" and tooltipLine ~= "" and (not AS_ContainsArabic or not AS_ContainsArabic(tooltipLine))) then
         for _, titleEntry in ipairs(titleEntries) do
            if (((titleEntry.displayText and tooltipLine == titleEntry.displayText) or string.find(tooltipLine, titleEntry.originalTitle, 1, true))) then
-              local translatedLine = QTR_PrepareExternalQuestTitleDisplay(titleEntry.questId, tooltipLine, titleEntry.originalTitle, 240, QTR_Font2, 13, QTR_Font2, false);
+              -- No-wrap width: keep the title on one line so GameTooltip auto-sizes its width to it
+              -- instead of the fixed width breaking a long RTL title across rows.
+              local translatedLine = QTR_PrepareExternalQuestTitleDisplay(titleEntry.questId, tooltipLine, titleEntry.originalTitle, QTR_QUESTIE_TITLE_NOWRAP_WIDTH, QTR_Font2, 13, QTR_Font2, false);
               if (translatedLine and translatedLine ~= "") then
                  translatedLines[#translatedLines + 1] = translatedLine;
               else
@@ -1264,6 +1329,35 @@ function QTR_TryHookQuestieUnitTooltips()
         tooltip.qtrQuestieTitleLineData = {};
         QTR_ApplyQuestieTooltipFonts(tooltip);
      end);
+
+     -- AddItemDataToTooltip is called as .AddItemDataToTooltip(tooltip); the first arg is the
+     -- GameTooltip/ItemRefTooltip Questie appended its quest lines to.
+     if (type(QuestieTooltips.private.AddItemDataToTooltip) == "function") then
+        hooksecurefunc(QuestieTooltips.private, "AddItemDataToTooltip", function(tooltip)
+           if (not tooltip or type(tooltip.GetName) ~= "function" or type(tooltip.NumLines) ~= "function") then
+              return;
+           end
+           if (not QTR_PS or QTR_PS["active"] ~= "1") then
+              return;
+           end
+
+           tooltip.qtrQuestieTitleLineData = {};
+           QTR_ApplyQuestieTooltipFonts(tooltip);
+        end);
+     end
+
+     -- AddObjectDataToTooltip is called as :AddObjectDataToTooltip(name); it always writes to GameTooltip.
+     if (type(QuestieTooltips.private.AddObjectDataToTooltip) == "function") then
+        hooksecurefunc(QuestieTooltips.private, "AddObjectDataToTooltip", function()
+           if (not GameTooltip or not QTR_PS or QTR_PS["active"] ~= "1") then
+              return;
+           end
+
+           GameTooltip.qtrQuestieTitleLineData = {};
+           QTR_ApplyQuestieTooltipFonts(GameTooltip);
+        end);
+     end
+
      QuestieTooltips.private.qtrUnitTooltipFontHooked = true;
   end
 
