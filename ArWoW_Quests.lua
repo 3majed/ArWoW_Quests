@@ -727,11 +727,25 @@ end
 
 
 -- Fetch, expand, and normalize a translated quest title by quest ID.
+-- Every quest-log row, tracker line and tooltip asks for this on each repaint, and the result only
+-- depends on the quest ID for the session. Memoized (false = no translation); global for the local limit.
+QTR_TitleByIdCache = {};
+
 function QTR_GetTranslatedQuestTitleById(questId)
-  if (questId and QTR_QuestData[questId] and QTR_QuestData[questId]["Title"]) then
-     return QTR_NormalizeTranslatedTitle(QTR_ExpandUnitInfo(QTR_QuestData[questId]["Title"]));
+  if (not questId) then
+     return nil;
   end
-  return nil;
+  local cached = QTR_TitleByIdCache[questId];
+  if (cached ~= nil) then
+     return cached or nil;
+  end
+
+  local translatedTitle = nil;
+  if (QTR_QuestData[questId] and QTR_QuestData[questId]["Title"]) then
+     translatedTitle = QTR_NormalizeTranslatedTitle(QTR_ExpandUnitInfo(QTR_QuestData[questId]["Title"]));
+  end
+  QTR_TitleByIdCache[questId] = translatedTitle or false;
+  return translatedTitle;
 end
 
 
@@ -1131,11 +1145,36 @@ local function QTR_ExtractLeadingDisplayControlCodes(text)
 end
 
 
+-- Questie's tracker, the Blizzard tracker and quest tooltips ask for the same titles on every repaint,
+-- and each miss measures text through the shared test font string. Memoized per argument set
+-- (false = no translation); cleared when QTR_PC changes, since title-only lookups depend on it.
+QTR_ExternalTitleCache = {};
+QTR_ExternalTitleCacheN = 0;
+
 function QTR_PrepareExternalQuestTitleDisplay(questId, displayText, originalTitle, width, fontName, fontSize, measureFontName, rtlTitleFirst)
   if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
      return nil;
   end
 
+  local cacheKey = tostring(questId) .. "\1" .. tostring(displayText) .. "\1" .. tostring(originalTitle) .. "\1" .. tostring(width) .. "\1"
+     .. tostring(fontName) .. "\1" .. tostring(fontSize) .. "\1" .. tostring(measureFontName) .. "\1" .. tostring(rtlTitleFirst);
+  local cached = QTR_ExternalTitleCache[cacheKey];
+  if (cached ~= nil) then
+     return cached or nil;
+  end
+
+  local result = QTR_BuildExternalQuestTitleDisplay(questId, displayText, originalTitle, width, fontName, fontSize, measureFontName, rtlTitleFirst);
+  if (QTR_ExternalTitleCacheN >= 500) then
+     QTR_ExternalTitleCache = {};
+     QTR_ExternalTitleCacheN = 0;
+  end
+  QTR_ExternalTitleCache[cacheKey] = result or false;
+  QTR_ExternalTitleCacheN = QTR_ExternalTitleCacheN + 1;
+  return result;
+end
+
+
+function QTR_BuildExternalQuestTitleDisplay(questId, displayText, originalTitle, width, fontName, fontSize, measureFontName, rtlTitleFirst)
    local shapedFontName = fontName or QTR_Font1 or QTR_Font2;
    local measuredFontName = measureFontName or fontName or QTR_Font1 or QTR_Font2;
 
@@ -1884,6 +1923,19 @@ end
 
 -- Reapply translated quest titles to the visible left quest-log rows after Blizzard redraws them.
 function QTR_UpdateQuestLogTitleButtons()
+  -- Repeat calls within one frame are skipped unless QuestLog_Update redrew the rows in between.
+  -- Rows Blizzard re-sets individually still go through the per-button SetText hooks.
+  local refreshState = QTR_RefreshState;
+  if (refreshState and type(GetTime) == "function") then
+     local rowsKey = tostring(refreshState.rowsGen) .. ":" .. tostring(QTR_PS and QTR_PS["active"]) .. ":" .. tostring(QTR_PS and QTR_PS["transtitle"]);
+     local now = GetTime();
+     if (refreshState.rowsTime == now and refreshState.rowsKey == rowsKey) then
+        return;
+     end
+     refreshState.rowsTime = now;
+     refreshState.rowsKey = rowsKey;
+  end
+
   QTR_UpdateQuestLogFrameLabels();
 
   if (not QTR_PS or QTR_PS["active"] ~= "1" or QTR_PS["transtitle"] ~= "1") then
@@ -2287,6 +2339,20 @@ end
 
 local QTR_RuntimeInitialized = false;
 QTR_ArenaRegistrarHooksInitialized = false;
+
+-- One quest-log update reaches the detail panel and the rows through several hooks (QUEST_LOG_UPDATE,
+-- QuestLog_Update, QuestLog_UpdateQuestDetails, Leatrix refreshes). Blizzard redraws the shared QuestInfo
+-- frames only through QuestInfo_Display and the rows only through QuestLog_Update, so these counters tell
+-- whether anything changed since our last pass. Global table, to stay clear of this file's local limit.
+QTR_RefreshState = {
+   renderHooked = false,   -- QuestInfo_Display is hooked, so renderGen can be trusted
+   renderGen = 0,          -- bumped whenever the QuestInfo frames are redrawn or restyled
+   detailKey = nil,        -- state of the last full detail pass
+   detailTime = 0,
+   rowsGen = 0,            -- bumped on every QuestLog_Update
+   rowsKey = nil,          -- state of the last full rows pass
+   rowsTime = nil,
+};
 local QTR_EventFrame = CreateFrame("Frame");
 local QTR_SuppressGossipRefreshHook = false;
 local QTR_GossipRefreshPending = false;
@@ -2433,7 +2499,16 @@ local function QTR_InitializeRuntime()
      end);
   end
   if (type(QuestLog_Update) == "function") then
-     hooksecurefunc("QuestLog_Update", QTR_UpdateQuestLogTitleButtons);
+     hooksecurefunc("QuestLog_Update", function()
+        QTR_RefreshState.rowsGen = QTR_RefreshState.rowsGen + 1;
+        QTR_UpdateQuestLogTitleButtons();
+     end);
+  end
+  if (type(QuestInfo_Display) == "function") then
+     hooksecurefunc("QuestInfo_Display", function()
+        QTR_RefreshState.renderGen = QTR_RefreshState.renderGen + 1;
+     end);
+     QTR_RefreshState.renderHooked = true;
   end
 
   if (GossipFrame) then
@@ -2806,24 +2881,28 @@ function QTR_wait(delay, func, ...)
   if(QTR_waitFrame == nil) then
     QTR_waitFrame = CreateFrame("Frame","QTR_WaitFrame", UIParent);
     QTR_waitFrame:SetScript("onUpdate",function (self,elapse)
+      -- Only records queued before this frame run now; ones added by callbacks wait for the next frame
       local count = #QTR_waitTable;
       local i = 1;
       while(i<=count) do
-        local waitRecord = tremove(QTR_waitTable,i);
-        local d = tremove(waitRecord,1);
-        local f = tremove(waitRecord,1);
-        local p = tremove(waitRecord,1);
-        if(d>elapse) then
-          tinsert(QTR_waitTable,i,{d-elapse,f,p});
+        local waitRecord = QTR_waitTable[i];
+        if(waitRecord[1]>elapse) then
+          waitRecord[1] = waitRecord[1] - elapse;
           i = i + 1;
         else
+          tremove(QTR_waitTable,i);
           count = count - 1;
-          f(unpack(p));
+          waitRecord[2](unpack(waitRecord[3]));
         end
+      end
+      -- Nothing left to wait for, so stop running every frame until the next QTR_wait call
+      if(#QTR_waitTable == 0) then
+        self:Hide();
       end
     end);
   end
   tinsert(QTR_waitTable,{delay,func,{...}});
+  QTR_waitFrame:Show();
   return true;
 end
 
@@ -2988,6 +3067,11 @@ function QTR_OnEvent2()
   if (QTR_event == "QUEST_COMPLETE") then
      if ( q_ID > 0) then
         local str_id = tostring(q_ID);
+        if (QTR_PC[str_id] ~= "OK") then
+           -- Title-only lookups prefer uncompleted quest IDs, so cached title displays may now differ
+           QTR_ExternalTitleCache = {};
+           QTR_ExternalTitleCacheN = 0;
+        end
         QTR_PC[str_id]="OK";
      end
   end
@@ -3054,6 +3138,8 @@ end
 
 -- Restore Blizzard quest fonts, headings, and reward labels.
 function RestoreOriginalFonts()
+  -- Restyles the QuestInfo frames shared by the quest log, NPC quest dialogs and the world map
+  QTR_RefreshState.renderGen = QTR_RefreshState.renderGen + 1;
   QuestInfoTitleHeader:SetFont(Original_Font1, 18);
    QuestInfoTitleHeader:SetJustifyH("LEFT");
    QTR_UpdateQuestOfferButtons(nil);
@@ -3109,6 +3195,7 @@ end
 
 -- Replace live quest dialog text inside the Blizzard quest frame.
 function QTR_ChangeText_InEvent(QTR_event, str_id)
+   QTR_RefreshState.renderGen = QTR_RefreshState.renderGen + 1;
    QTR_UpdateQuestOfferButtons(QTR_event);
   if (QTR_PS["transtitle"]=="1") then
    QTR_SetShapedTitleText(QuestInfoTitleHeader, QTR_GetTranslatedQuestTitleById(str_id), QTR_Font1, 18, QuestInfoTitleHeader:GetWidth());
@@ -3950,6 +4037,18 @@ function QTR_UpdateQuestInfo()
      return;
   end
 
+  -- The same refresh arrives through several hooks per quest-log update. If the same quest is selected
+  -- and nothing redrew or restyled the panel since our last full pass (under a second ago), it is still
+  -- up to date, so skip re-setting the texts and re-running the layout.
+  local refreshState = QTR_RefreshState;
+  local function DetailKey()
+     return tostring(questSelected) .. ":" .. tostring(questID) .. ":" .. tostring(QTR_PS["transtitle"]) .. ":" .. tostring(refreshState.renderGen);
+  end
+  if (refreshState and refreshState.renderHooked and QTR_LastQuestLogSelection == questSelected
+     and refreshState.detailKey == DetailKey() and (GetTime() - refreshState.detailTime) < 1) then
+     return;
+  end
+
   local selectionChanged = (QTR_LastQuestLogSelection ~= questSelected);
   QTR_LastQuestLogSelection = questSelected;
 
@@ -3974,6 +4073,11 @@ function QTR_UpdateQuestInfo()
   end 
 
   QTR_ReflowQuestLogDetailLayout(selectionChanged);
+  if (refreshState) then
+     -- Recorded after the pass: our own QuestLog_UpdateQuestDetails / RestoreOriginalFonts calls above bump renderGen
+     refreshState.detailKey = DetailKey();
+     refreshState.detailTime = GetTime();
+  end
   if (type(QTR_wait) == "function") then
      QTR_QuestLogReflowSerial = QTR_QuestLogReflowSerial + 1;
      local reflowSerial = QTR_QuestLogReflowSerial;

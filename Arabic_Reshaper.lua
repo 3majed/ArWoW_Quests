@@ -190,8 +190,30 @@ end
 -------------------------------------------------------------------------------------------------------
 -- Utility: Check if a string contains Arabic characters
 -------------------------------------------------------------------------------------------------------
+-- Most text checked here is English UI text. A string with no byte that can start an Arabic character
+-- cannot match below, so it is rejected before the per-character walk. Built from the rule keys.
+local AS_ArabicLeadRules, AS_ArabicLeadPattern;
+
+local function AS_GetArabicLeadPattern()
+   if (AS_ArabicLeadRules ~= AS_Reshaping_Rules or not AS_ArabicLeadPattern) then
+      AS_ArabicLeadRules = AS_Reshaping_Rules;
+      local seen, leads = { [216] = true, [217] = true, [239] = true }, { "\216", "\217", "\239" };
+      for key in pairs(AS_Reshaping_Rules or {}) do
+         local lead = type(key) == "string" and string.byte(key, 1);
+         if (lead and not seen[lead]) then
+            seen[lead] = true;
+            local leadChar = string.char(lead);
+            leads[#leads + 1] = (lead < 128 and not string.find(leadChar, "%w")) and ("%" .. leadChar) or leadChar;
+         end
+      end
+      AS_ArabicLeadPattern = "[" .. table.concat(leads) .. "]";
+   end
+   return AS_ArabicLeadPattern;
+end
+
 function AS_ContainsArabic(s)
    if not s or #s == 0 then return false end
+   if not string.find(s, AS_GetArabicLeadPattern()) then return false end
    local bytes = strlen(s);
    local pos = 1;
    while pos <= bytes do
@@ -426,10 +448,21 @@ local function AS_IsNonConnecting(char)
    return AS_NonConnecting[char] == true;
 end
 
+-- Checked twice for every character while shaping; a set replaces scanning this string on each call.
+local AS_WordSeparatorChars = {};
+do
+   local spaces = '( )?؟!,.;:،؛٪\n\r\t"';
+   local pos = 1;
+   while pos <= strlen(spaces) do
+      local charbytes = AS_UTF8charbytes(spaces, pos);
+      AS_WordSeparatorChars[strsub(spaces, pos, pos + charbytes - 1)] = true;
+      pos = pos + charbytes;
+   end
+end
+
 local function AS_IsWordSeparator(char)
    if not char or char == '' or char == 'X' then return true end
-   local spaces = '( )?؟!,.;:،؛٪\n\r\t"';
-   if AS_UTF8find(spaces, char) then return true end
+   if AS_WordSeparatorChars[char] then return true end
    if char == "\216\161" then return true end
    if (#char == 1) and (char >= "0") and (char <= "9") then return true end
    if AS_ArabicPunctuation[char] then return true end
@@ -564,12 +597,14 @@ function AS_UTF8reverse(s)
       local charbytes1 = AS_UTF8charbytes(s, pos);
       local char1 = strsub(s, pos, pos + charbytes1 - 1);
 
-      local attachedDiacritics = {};
+      -- Most characters carry no diacritics, so the list is only created when one is found
+      local attachedDiacritics = nil;
       local nextPos = pos + charbytes1;
       while nextPos <= bytes do
          local diacBytes = AS_UTF8charbytes(s, nextPos);
          local diacChar = strsub(s, nextPos, nextPos + diacBytes - 1);
          if AS_IsDiacritic(diacChar) then
+            attachedDiacritics = attachedDiacritics or {};
             attachedDiacritics[#attachedDiacritics + 1] = diacChar;
             nextPos = nextPos + diacBytes;
          else
@@ -752,11 +787,13 @@ function AS_UTF8reverse(s)
                outputChar = tostring(position) .. outputChar;
             end
 
-            for _, diac in ipairs(attachedDiacritics) do
-               if AS_USE_PRESENTATION_DIACRITICS and AS_DiacriticPresentationForms[diac] then
-                  outputChar = outputChar .. AS_DiacriticPresentationForms[diac];
-               else
-                  outputChar = outputChar .. diac;
+            if attachedDiacritics then
+               for _, diac in ipairs(attachedDiacritics) do
+                  if AS_USE_PRESENTATION_DIACRITICS and AS_DiacriticPresentationForms[diac] then
+                     outputChar = outputChar .. AS_DiacriticPresentationForms[diac];
+                  else
+                     outputChar = outputChar .. diac;
+                  end
                end
             end
 
@@ -839,6 +876,7 @@ function AS_ReverseAndPrepareLineText(Atext, Awidth, Afont, AfontSize)
       local char1 = "";
       local char2 = "";
       local last_space = 0;
+      local measureReady = false;                                 -- width and font only need setting before the first measurement
       while (pos <= bytes) do                                     -- UWAGA: tekst arabski jest podany wprost, od lewej są poszczególne znaki
          charbytes = AS_UTF8charbytes(Atext, pos);                -- count of bytes (liczba bajtów znaku)
          char1 = strsub(Atext, pos, pos + charbytes - 1);         -- pobrany znak litery
@@ -858,8 +896,11 @@ function AS_ReverseAndPrepareLineText(Atext, Awidth, Afont, AfontSize)
             last_space = last_space + charbytes;
          end
          if (link_start_stop == false) then -- nie jesteśmy wewnątrz linku - można sprawdzać
-            AS_TestLine.text:SetWidth(Awidth);   -- set the text width used for wrap measurement
-            AS_TestLine.text:SetFont(Afont, AfontSize);
+            if (not measureReady) then
+               AS_TestLine.text:SetWidth(Awidth);   -- set the text width used for wrap measurement
+               AS_TestLine.text:SetFont(Afont, AfontSize);
+               measureReady = true;
+            end
             AS_TestLine.text:SetText(AS_UTF8reverse(newstr));
             if ((char1 == '#') or (AS_TestLine.text:GetHeight() > AfontSize * 1.5)) then -- tekst nie mieści się już w 1 linii
                newstr = string.sub(newstr, 1, strlen(newstr) - last_space);              -- tekst do ostatniej spacji

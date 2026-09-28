@@ -42,6 +42,10 @@ local function QTR_TranslateQuestieTrackerStatusText(text)
   if (type(text) ~= "string" or text == "") then
      return nil;
   end
+  -- Every tracker line passes through here on each update; only the two status lines contain "Quest "
+  if (not string.find(text, "Quest ", 1, true)) then
+     return nil;
+  end
 
   local strippedText = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "");
   strippedText = string.gsub(strippedText, "|r", "");
@@ -418,6 +422,31 @@ local function QTR_ReapplyQuestieArrowDistance(distanceFontString)
 end
 
 
+-- Questie rewrites the arrow distance 20 times a second while moving. Wrapping the whole string each
+-- time missed every cache (the number keeps changing) and flushed the shared wrap cache. For Questie's
+-- "%.1f" and "--" values, shape the Arabic label once and put the number in front, where RTL shows it.
+local QTR_QUESTIE_ARROW_DISTANCE_LABEL = "المسافة:";
+local QTR_QuestieArrowDistanceLabels = {};
+
+
+local function QTR_GetQuestieArrowDistanceText(distanceSuffix, fontName, fontSize)
+  if (distanceSuffix ~= "" and distanceSuffix ~= "--" and not string.find(distanceSuffix, "^%d+%.?%d*$")) then
+     return QTR_PrepareWrappedArabicText(QTR_QUESTIE_ARROW_DISTANCE_LABEL .. " " .. distanceSuffix, 220, fontName, fontSize);
+  end
+
+  local labelKey = tostring(fontName) .. ":" .. tostring(fontSize);
+  local shapedLabel = QTR_QuestieArrowDistanceLabels[labelKey];
+  if (not shapedLabel) then
+     shapedLabel = QTR_PrepareWrappedArabicText(QTR_QUESTIE_ARROW_DISTANCE_LABEL, 220, fontName, fontSize);
+     QTR_QuestieArrowDistanceLabels[labelKey] = shapedLabel;
+  end
+  if (distanceSuffix == "") then
+     return shapedLabel;
+  end
+  return distanceSuffix .. " " .. shapedLabel;
+end
+
+
 local function QTR_PatchQuestieArrowDistance(distanceFontString)
   if (not distanceFontString or distanceFontString.qtrQuestieArrowDistancePatched) then
      return true;
@@ -439,7 +468,10 @@ local function QTR_PatchQuestieArrowDistance(distanceFontString)
      if (rawDisplayText == "") then
         state.originalDisplayText = nil;
         state.translatedDisplayText = nil;
-        QTR_RestoreExternalFontState(self, QTR_QuestieArrowTitleState);
+        if (state.qtrArabicFontApplied) then
+           QTR_RestoreExternalFontState(self, QTR_QuestieArrowTitleState);
+           state.qtrArabicFontApplied = nil;
+        end
         return originalSetText(self, text);
      end
 
@@ -450,18 +482,18 @@ local function QTR_PatchQuestieArrowDistance(distanceFontString)
      if (distanceSuffix and QTR_PS and QTR_PS["active"] == "1") then
         local fontState = QTR_GetExternalFontState(self, QTR_QuestieArrowTitleState);
         local arabicFont = QTR_Font2 or QTR_Font1 or (fontState and fontState.font) or Original_Font2;
-        local displayText = "المسافة:";
-        if (distanceSuffix ~= "") then
-           displayText = displayText .. " " .. distanceSuffix;
-        end
-        translatedText = QTR_PrepareWrappedArabicText(displayText, 220, arabicFont, (fontState and fontState.size) or 13);
+        translatedText = QTR_GetQuestieArrowDistanceText(distanceSuffix, arabicFont, (fontState and fontState.size) or 13);
      end
 
      if (translatedText and translatedText ~= "" and translatedText ~= rawDisplayText) then
         local fontState = QTR_GetExternalFontState(self, QTR_QuestieArrowTitleState);
 
         state.lock = true;
-        originalSetFont(self, QTR_Font2 or QTR_Font1 or (fontState and fontState.font) or Original_Font2, (fontState and fontState.size) or 13, fontState and fontState.flags);
+        -- Only the text changes between updates; the Arabic font stays until it is restored
+        if (not state.qtrArabicFontApplied) then
+           originalSetFont(self, QTR_Font2 or QTR_Font1 or (fontState and fontState.font) or Original_Font2, (fontState and fontState.size) or 13, fontState and fontState.flags);
+           state.qtrArabicFontApplied = true;
+        end
         originalSetText(self, translatedText);
         state.lock = false;
         state.translatedDisplayText = translatedText;
@@ -469,7 +501,10 @@ local function QTR_PatchQuestieArrowDistance(distanceFontString)
      end
 
      state.translatedDisplayText = nil;
-     QTR_RestoreExternalFontState(self, QTR_QuestieArrowTitleState);
+     if (state.qtrArabicFontApplied) then
+        QTR_RestoreExternalFontState(self, QTR_QuestieArrowTitleState);
+        state.qtrArabicFontApplied = nil;
+     end
      return originalSetText(self, rawDisplayText);
   end;
 
@@ -505,6 +540,7 @@ local function QTR_PatchQuestieArrowFrame(frame)
               state.originalDisplayText = nil;
               state.translatedDisplayText = nil;
               state.lock = nil;
+              state.qtrArabicFontApplied = nil;
            end
            QTR_RestoreExternalFontState(self.distance, QTR_QuestieArrowTitleState);
         end
@@ -891,6 +927,15 @@ local function QTR_UpdateQuestieTooltipFontString(fontString, tooltip)
   end
 
   local fontText = fontString:GetText() or "";
+
+  -- This runs for every line of every unit and item tooltip (bag item tooltips refresh 5 times a
+  -- second). A plain line we never switched to Arabic needs nothing, so skip it without touching it.
+  local titleDataMap = tooltip and tooltip.qtrQuestieTitleLineData;
+  if (not fontState.qtrArabicApplied and (type(titleDataMap) ~= "table" or next(titleDataMap) == nil)
+     and not string.find(fontText, "[\216-\219\239]") and not string.find(fontText, "Next in chain", 1, true)) then
+     return false;
+  end
+
   local texturePrefix, lookupText = QTR_ExtractLeadingTextureTags(fontText);
   local titleLineData = QTR_FindQuestieTitleLineData(tooltip, fontText, lookupText);
   if (titleLineData) then
@@ -905,7 +950,8 @@ local function QTR_UpdateQuestieTooltipFontString(fontString, tooltip)
            fontString:SetJustifyH("RIGHT");
         end
         fontString:SetText(texturePrefix .. shapedTitleText);
-        return;
+        fontState.qtrArabicApplied = true;
+        return true;
      end
   end
 
@@ -917,7 +963,8 @@ local function QTR_UpdateQuestieTooltipFontString(fontString, tooltip)
            fontString:SetJustifyH("RIGHT");
         end
         fontString:SetText(nextInChainText);
-        return;
+        fontState.qtrArabicApplied = true;
+        return true;
      end
   end
 
@@ -926,12 +973,16 @@ local function QTR_UpdateQuestieTooltipFontString(fontString, tooltip)
      if (fontString.SetJustifyH) then
         fontString:SetJustifyH("RIGHT");
      end
-  else
-     fontString:SetFont(fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
-     if (fontString.SetJustifyH) then
-        fontString:SetJustifyH(fontState.justify or "LEFT");
-     end
+     fontState.qtrArabicApplied = true;
+     return true;
   end
+
+  fontString:SetFont(fontState.font or Original_Font2, fontState.size or 13, fontState.flags);
+  if (fontString.SetJustifyH) then
+     fontString:SetJustifyH(fontState.justify or "LEFT");
+  end
+  fontState.qtrArabicApplied = nil;
+  return false;
 end
 
 
@@ -946,15 +997,19 @@ local function QTR_ApplyQuestieTooltipFonts(tooltip)
   end
 
   local numLines = tooltip:NumLines() or 0;
+  local hasArabicLeftLine = false;
   for lineIndex = 1, numLines do
-     QTR_UpdateQuestieTooltipFontString(_G[tooltipName .. "TextLeft" .. lineIndex], tooltip);
+     if (QTR_UpdateQuestieTooltipFontString(_G[tooltipName .. "TextLeft" .. lineIndex], tooltip)) then
+        hasArabicLeftLine = true;
+     end
      QTR_UpdateQuestieTooltipFontString(_G[tooltipName .. "TextRight" .. lineIndex], tooltip);
   end
 
   -- GameTooltip's left FontStrings auto-size to their text, so SetJustifyH("RIGHT") stays invisible
   -- and wrapped Arabic body lines keep their short trailing line on the left. Stretch single-column
   -- Arabic lines to the widest left line so they right-align to a shared right edge.
-  if (QTR_PS and QTR_PS["active"] == "1") then
+  -- Only lines left in Arabic above are stretched, so a tooltip without any has nothing to do here.
+  if (hasArabicLeftLine and QTR_PS and QTR_PS["active"] == "1") then
      local maxLeftWidth = 0;
      for lineIndex = 1, numLines do
         local leftFontString = _G[tooltipName .. "TextLeft" .. lineIndex];
