@@ -210,43 +210,56 @@ end
 
 
 function Spr_Gender(msg)
-   local function replaceGenderToken(patternPrefix, terminator)
-      msg = string.gsub(msg, patternPrefix.."%s*(.-)%s*:%s*(.-)%s*"..terminator, function(masc, fem)
+   -- The token forms need a "$", a "{" or "YOUR_GENDER" in the text; none of the steps can add one
+   local hasDollar = string.find(msg, "$", 1, true)
+
+   if (hasDollar) then
+      local function replaceGenderToken(patternPrefix, terminator)
+         msg = string.gsub(msg, patternPrefix.."%s*(.-)%s*:%s*(.-)%s*"..terminator, function(masc, fem)
+            return QTR_SelectGenderText(QTR_sex, masc, fem)
+         end)
+      end
+
+      replaceGenderToken("%$[gG]", ";")
+      replaceGenderToken("%$[gG]", "؛")
+      replaceGenderToken("%$[tT]", ";")
+      replaceGenderToken("%$[tT]", "؛")
+
+      msg = string.gsub(msg, "%$[tT]%s*(.-)%s*;", "%1")
+      msg = string.gsub(msg, "%$[tT]%s*(.-)%s*؛", "%1")
+   end
+
+   if (string.find(msg, "{", 1, true)) then
+      -- Replace {g} masc : fem ; or ؛
+      msg = string.gsub(msg, "{[gG]}%s*(.-)%s*:%s*(.-)%s*;", function(masc, fem)
+         return QTR_SelectGenderText(QTR_sex, masc, fem)
+      end)
+      msg = string.gsub(msg, "{[gG]}%s*(.-)%s*:%s*(.-)%s*؛", function(masc, fem)
+         return QTR_SelectGenderText(QTR_sex, masc, fem)
+      end)
+      -- Replace {g masc : fem} or {G masc : fem}
+      msg = string.gsub(msg, "{[gG]%s*([^:}]*)%s*:%s*([^}]*)}", function(masc, fem)
          return QTR_SelectGenderText(QTR_sex, masc, fem)
       end)
    end
-
-   replaceGenderToken("%$[gG]", ";")
-   replaceGenderToken("%$[gG]", "؛")
-   replaceGenderToken("%$[tT]", ";")
-   replaceGenderToken("%$[tT]", "؛")
-
-   msg = string.gsub(msg, "%$[tT]%s*(.-)%s*;", "%1")
-   msg = string.gsub(msg, "%$[tT]%s*(.-)%s*؛", "%1")
-
-   -- Replace {g} masc : fem ; or ؛
-   msg = string.gsub(msg, "{[gG]}%s*(.-)%s*:%s*(.-)%s*;", function(masc, fem)
-      return QTR_SelectGenderText(QTR_sex, masc, fem)
-   end)
-   msg = string.gsub(msg, "{[gG]}%s*(.-)%s*:%s*(.-)%s*؛", function(masc, fem)
-      return QTR_SelectGenderText(QTR_sex, masc, fem)
-   end)
-   -- Replace {g masc : fem} or {G masc : fem}
-   msg = string.gsub(msg, "{[gG]%s*([^:}]*)%s*:%s*([^}]*)}", function(masc, fem)
-      return QTR_SelectGenderText(QTR_sex, masc, fem)
-   end)
    -- YOUR_GENDER(x;y)
-   msg = string.gsub(msg, "YOUR_GENDER%s*%(([^;]*);([^)]*)%)", function(masc, fem)
-      return QTR_SelectGenderText(QTR_sex, masc, fem)
-   end)
-   msg = string.gsub(msg, "%s+%$[gG]%s*([%.!,%?:])", "%1")
-   msg = string.gsub(msg, "%$[gG]%s*([%.!,%?:])", "%1")
-   msg = string.gsub(msg, "%s+%$[gG]%s*،", "،")
-   msg = string.gsub(msg, "%$[gG]%s*،", "،")
-   msg = string.gsub(msg, "%s+%$[gG]%s*؛", "؛")
-   msg = string.gsub(msg, "%$[gG]%s*؛", "؛")
-   msg = string.gsub(msg, "%s+%$[gG]%s*$", "")
-   msg = string.gsub(msg, "  +", " ")
+   if (string.find(msg, "YOUR_GENDER", 1, true)) then
+      msg = string.gsub(msg, "YOUR_GENDER%s*%(([^;]*);([^)]*)%)", function(masc, fem)
+         return QTR_SelectGenderText(QTR_sex, masc, fem)
+      end)
+   end
+   if (hasDollar) then
+      msg = string.gsub(msg, "%s+%$[gG]%s*([%.!,%?:])", "%1")
+      msg = string.gsub(msg, "%$[gG]%s*([%.!,%?:])", "%1")
+      msg = string.gsub(msg, "%s+%$[gG]%s*،", "،")
+      msg = string.gsub(msg, "%$[gG]%s*،", "،")
+      msg = string.gsub(msg, "%s+%$[gG]%s*؛", "؛")
+      msg = string.gsub(msg, "%$[gG]%s*؛", "؛")
+      msg = string.gsub(msg, "%s+%$[gG]%s*$", "")
+   end
+   if (string.find(msg, "  ", 1, true)) then
+      msg = string.gsub(msg, "  +", " ")
+   end
 
    return msg;
 end
@@ -4453,37 +4466,57 @@ function QTR_ExpandUnitInfo(msg)
       return cached;
    end
 
-   msg = string.gsub(msg, "%$[bB]", "\n");
-   msg = string.gsub(msg, "%$[nN]", "{N}");
-   msg = string.gsub(msg, "%$[cC]", "{C}");
-   msg = string.gsub(msg, "%$[rR]", "{R}");
+   -- Most texts hold only a few placeholders. Each group of substitutions below can only match when
+   -- its marker is in the text, so a plain search for the marker skips the groups that have nothing to do.
+   if (string.find(msg, "$", 1, true)) then
+      msg = string.gsub(msg, "%$[bB]", "\n");
+      msg = string.gsub(msg, "%$[nN]", "{N}");
+      msg = string.gsub(msg, "%$[cC]", "{C}");
+      msg = string.gsub(msg, "%$[rR]", "{R}");
+   end
 
-   msg = string.gsub(msg, "{B}", "\n");
-   msg = string.gsub(msg, "NEW_LINE", "\n");
+   local hasBrace = string.find(msg, "{", 1, true);
+   if (hasBrace) then
+      msg = string.gsub(msg, "{B}", "\n");
+   end
+   if (string.find(msg, "NEW_LINE", 1, true)) then
+      msg = string.gsub(msg, "NEW_LINE", "\n");
+   end
 
-   msg = string.gsub(msg, "{[cC]}", "{C}");
-   msg = string.gsub(msg, "{[rR]}", "{R}");
+   if (hasBrace) then
+      msg = string.gsub(msg, "{[cC]}", "{C}");
+      msg = string.gsub(msg, "{[rR]}", "{R}");
 
-   msg = string.gsub(msg, "{002DFFFFc}", "{cFFFFD200}");
-   msg = string.gsub(msg, "{FFFF00FFc}", "{cFF00FFFF}");
-   msg = string.gsub(msg, "{0000FFFFc}", "{cFFFF0000}");
-   msg = string.gsub(msg, "{ffffffffc}", "{cffffffff}");
-   msg = string.gsub(msg, "EU_ROLOC:", "UE_COLOR:");
+      msg = string.gsub(msg, "{002DFFFFc}", "{cFFFFD200}");
+      msg = string.gsub(msg, "{FFFF00FFc}", "{cFF00FFFF}");
+      msg = string.gsub(msg, "{0000FFFFc}", "{cFFFF0000}");
+      msg = string.gsub(msg, "{ffffffffc}", "{cffffffff}");
+   end
+   if (string.find(msg, "EU_ROLOC:", 1, true)) then
+      msg = string.gsub(msg, "EU_ROLOC:", "UE_COLOR:");
+   end
 
-   msg = string.gsub(msg, "{N}", AS_UTF8reverse(QTR_name));
-   msg = string.gsub(msg, "YOUR_NAME0", AS_UTF8reverse(string.upper(QTR_name)));
-   msg = string.gsub(msg, "YOUR_NAME1", AS_UTF8reverse(QTR_name));
-   msg = string.gsub(msg, "YOUR_NAME2", AS_UTF8reverse(QTR_name));
-   msg = string.gsub(msg, "YOUR_NAME3", AS_UTF8reverse(QTR_name));
-   msg = string.gsub(msg, "YOUR_NAME4", AS_UTF8reverse(QTR_name));
-   msg = string.gsub(msg, "YOUR_NAME5", AS_UTF8reverse(QTR_name));
-   msg = string.gsub(msg, "YOUR_NAME6", AS_UTF8reverse(QTR_name));
-   msg = string.gsub(msg, "YOUR_NAME7", AS_UTF8reverse(QTR_name));
-   msg = string.gsub(msg, "YOUR_NAME", AS_UTF8reverse(QTR_name));
+   if (hasBrace) then
+      msg = string.gsub(msg, "{N}", AS_UTF8reverse(QTR_name));
+   end
+   if (string.find(msg, "YOUR_NAME", 1, true)) then
+      local reversedName = AS_UTF8reverse(QTR_name);
+      msg = string.gsub(msg, "YOUR_NAME0", AS_UTF8reverse(string.upper(QTR_name)));
+      msg = string.gsub(msg, "YOUR_NAME1", reversedName);
+      msg = string.gsub(msg, "YOUR_NAME2", reversedName);
+      msg = string.gsub(msg, "YOUR_NAME3", reversedName);
+      msg = string.gsub(msg, "YOUR_NAME4", reversedName);
+      msg = string.gsub(msg, "YOUR_NAME5", reversedName);
+      msg = string.gsub(msg, "YOUR_NAME6", reversedName);
+      msg = string.gsub(msg, "YOUR_NAME7", reversedName);
+      msg = string.gsub(msg, "YOUR_NAME", reversedName);
+   end
 
    msg = QTR_ResolveGenderPlaceholders(msg);
 
-   if (QTR_sex==3) then        -- feminine form
+   if (not string.find(msg, "{", 1, true) and not string.find(msg, "YOUR_", 1, true)) then
+      -- no class or race placeholder left to fill in
+   elseif (QTR_sex==3) then        -- feminine form
       msg = string.gsub(msg, "{C}", player_class.M2);
       msg = string.gsub(msg, "{R}", player_race.M2);
       msg = string.gsub(msg, "YOUR_CLASS1", player_class.M2);          -- Nominative (who, what?)

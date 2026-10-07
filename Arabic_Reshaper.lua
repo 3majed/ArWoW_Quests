@@ -489,8 +489,18 @@ local function AS_IsNumberSeparator(char)
    return AS_NumberSeparators[char] == true;
 end
 
+-- Digit runs are the only thing AS_FixDigitRunsForRTL rewrites; everything else is copied through.
+local function AS_ContainsAnyDigit(s)
+   if string.find(s, "[0-9]") then return true end
+   for digit in pairs(AS_ArabicIndicNumerals) do
+      if string.find(s, digit, 1, true) then return true end
+   end
+   return false;
+end
+
 local function AS_FixDigitRunsForRTL(s)
    if not s or #s == 0 then return "" end
+   if not AS_ContainsAnyDigit(s) then return s end
 
    local out = {};
    local bytes = strlen(s);
@@ -582,166 +592,138 @@ end
 
 -------------------------------------------------------------------------------------------------------
 
+-- Splits a UTF-8 string into its characters. ASCII and two-byte characters (nearly all Arabic text)
+-- are sized inline; everything else, including invalid input, goes through AS_UTF8charbytes.
+local function AS_SplitUTF8(s)
+   local chars = {};
+   local count = 0;
+   local bytes = strlen(s);
+   local pos = 1;
+   while (pos <= bytes) do
+      local c = strbyte(s, pos);
+      local charbytes;
+      if (c > 0 and c <= 127) then
+         charbytes = 1;
+      else
+         local c2 = (c >= 194 and c <= 223) and strbyte(s, pos + 1);
+         if (c2 and c2 >= 128 and c2 <= 191) then
+            charbytes = 2;
+         else
+            charbytes = AS_UTF8charbytes(s, pos);
+         end
+      end
+      count = count + 1;
+      chars[count] = strsub(s, pos, pos + charbytes - 1);
+      pos = pos + charbytes;
+   end
+   return chars, count;
+end
+
+local AS_MirroredBrackets = {
+   ["<"] = ">", [">"] = "<",
+   ["("] = ")", [")"] = "(",
+   ["["] = "]", ["]"] = "[",
+   ["{"] = "}", ["}"] = "{",
+};
+
 -- Reverses the order of UTF-8 letters with ReShaping
 function AS_UTF8reverse(s)
    if not s or #s == 0 then return "" end
 
+   -- The string is split once, so the look-ahead below indexes characters instead of decoding them again
+   local chars, count = AS_SplitUTF8(s);
+   local diacritics = AS_Diacritics;
+   local rules = AS_Reshaping_Rules;
+   local rules2 = AS_Reshaping_Rules2;
+   local rules3 = AS_Reshaping_Rules3;
+   local hasRules3 = (next(rules3) ~= nil);
    local resultParts = {};
-   local resultIndex = 1;
-   local bytes = strlen(s);
-   local pos = 1;
-   local prevChar = nil;
+   local resultIndex = 0;
    local prevConnectsRight = false;
+   local separatorIndex, separatorValue = 0, false;
+   local index = 1;
 
-   while (pos <= bytes) do
-      local charbytes1 = AS_UTF8charbytes(s, pos);
-      local char1 = strsub(s, pos, pos + charbytes1 - 1);
+   while (index <= count) do
+      local char1 = chars[index];
 
-      -- Most characters carry no diacritics, so the list is only created when one is found
-      local attachedDiacritics = nil;
-      local nextPos = pos + charbytes1;
-      while nextPos <= bytes do
-         local diacBytes = AS_UTF8charbytes(s, nextPos);
-         local diacChar = strsub(s, nextPos, nextPos + diacBytes - 1);
-         if AS_IsDiacritic(diacChar) then
-            attachedDiacritics = attachedDiacritics or {};
-            attachedDiacritics[#attachedDiacritics + 1] = diacChar;
-            nextPos = nextPos + diacBytes;
-         else
-            break;
-         end
+      -- Diacritics attached to char1 are chars[index + 1 .. index2 - 1]
+      local index2 = index + 1;
+      while (index2 <= count and diacritics[chars[index2]] == true) do
+         index2 = index2 + 1;
       end
-      pos = nextPos;
+      local nextIndex = index2;
 
-      if AS_IsDiacritic(char1) then
+      if (diacritics[char1] == true) then
          local diacOut = char1;
          if AS_USE_PRESENTATION_DIACRITICS and AS_DiacriticPresentationForms[char1] then
             diacOut = AS_DiacriticPresentationForms[char1];
          end
-         resultParts[resultIndex] = diacOut;
          resultIndex = resultIndex + 1;
+         resultParts[resultIndex] = diacOut;
       else
-         local char2 = nil;
-         local charbytes2 = 0;
-         local char3 = nil;
-         local charbytes3 = 0;
-         local lookPos = pos;
-
-         while lookPos <= bytes do
-            local tempBytes = AS_UTF8charbytes(s, lookPos);
-            local tempChar = strsub(s, lookPos, lookPos + tempBytes - 1);
-            if AS_IsDiacritic(tempChar) then
-               lookPos = lookPos + tempBytes;
-            else
-               char2 = tempChar;
-               charbytes2 = tempBytes;
-               break;
-            end
-         end
-
+         local char2 = chars[index2];
+         local char2Index = index2;
          local ligatureApplied = false;
          local ligatureForm = nil;
 
-         if char2 then
-            local lookPos3 = lookPos + charbytes2;
-            while lookPos3 <= bytes do
-               local tempBytes = AS_UTF8charbytes(s, lookPos3);
-               local tempChar = strsub(s, lookPos3, lookPos3 + tempBytes - 1);
-               if AS_IsDiacritic(tempChar) then
-                  lookPos3 = lookPos3 + tempBytes;
-               else
-                  char3 = tempChar;
-                  charbytes3 = tempBytes;
-                  break;
+         if (char2 and hasRules3) then
+            local index3 = index2 + 1;
+            while (index3 <= count and diacritics[chars[index3]] == true) do
+               index3 = index3 + 1;
+            end
+            local char3 = chars[index3];
+            if (char3 and rules3[char1 .. char2 .. char3]) then
+               ligatureForm = rules3[char1 .. char2 .. char3];
+               ligatureApplied = true;
+               nextIndex = index3 + 1;
+               while (nextIndex <= count and diacritics[chars[nextIndex]] == true) do
+                  nextIndex = nextIndex + 1;
                end
+               char2 = nil;
+               char2Index = 0;
             end
          end
 
-         if char2 and char3 and AS_Reshaping_Rules3[char1 .. char2 .. char3] then
-            ligatureForm = AS_Reshaping_Rules3[char1 .. char2 .. char3];
+         if ((not ligatureApplied) and char2 and rules2[char1 .. char2]) then
+            ligatureForm = rules2[char1 .. char2];
             ligatureApplied = true;
-            pos = lookPos + charbytes2 + charbytes3;
-
-            while pos <= bytes do
-               local skipBytes = AS_UTF8charbytes(s, pos);
-               local skipChar = strsub(s, pos, pos + skipBytes - 1);
-               if AS_IsDiacritic(skipChar) then
-                  pos = pos + skipBytes;
-               else
-                  break;
-               end
+            nextIndex = index2 + 1;
+            while (nextIndex <= count and diacritics[chars[nextIndex]] == true) do
+               nextIndex = nextIndex + 1;
             end
-
-            lookPos = pos;
-            char2 = nil;
-            char3 = nil;
+            char2 = chars[nextIndex];
+            char2Index = nextIndex;
          end
 
-         if (not ligatureApplied) and char2 and AS_Reshaping_Rules2[char1 .. char2] then
-            ligatureForm = AS_Reshaping_Rules2[char1 .. char2];
-            ligatureApplied = true;
-            pos = lookPos + charbytes2;
-
-            while pos <= bytes do
-               local skipBytes = AS_UTF8charbytes(s, pos);
-               local skipChar = strsub(s, pos, pos + skipBytes - 1);
-               if AS_IsDiacritic(skipChar) then
-                  pos = pos + skipBytes;
-               else
-                  break;
-               end
-            end
-
-            lookPos = pos;
-            char2 = nil;
-            while lookPos <= bytes do
-               local tempBytes = AS_UTF8charbytes(s, lookPos);
-               local tempChar = strsub(s, lookPos, lookPos + tempBytes - 1);
-               if AS_IsDiacritic(tempChar) then
-                  lookPos = lookPos + tempBytes;
-               else
-                  char2 = tempChar;
-                  break;
-               end
-            end
+         -- char2 becomes the next char1, so its separator test is kept for the next round
+         local isCurrentSeparator;
+         if (separatorIndex == index) then
+            isCurrentSeparator = separatorValue;
+         else
+            isCurrentSeparator = AS_IsWordSeparator(char1);
          end
-
-         local isCurrentSeparator = AS_IsWordSeparator(char1);
          local isNextSeparator = AS_IsWordSeparator(char2);
-         local isCurrentArabic = ligatureApplied or (AS_Reshaping_Rules[char1] ~= nil);
+         separatorIndex, separatorValue = char2Index, isNextSeparator;
 
-         if (not isCurrentSeparator) and (not isCurrentArabic) then
+         local charRules = rules[char1];
+         if (not isCurrentSeparator) and (not ligatureApplied) and (charRules == nil) then
             isCurrentSeparator = true;
          end
 
          if isCurrentSeparator then
-            local outputChar = char1;
-            if (char1 == "<") then outputChar = ">";
-            elseif (char1 == ">") then outputChar = "<";
-            elseif (char1 == "(") then outputChar = ")";
-            elseif (char1 == ")") then outputChar = "(";
-            elseif (char1 == "[") then outputChar = "]";
-            elseif (char1 == "]") then outputChar = "[";
-            elseif (char1 == "{") then outputChar = "}";
-            elseif (char1 == "}") then outputChar = "{";
-            end
-
-            resultParts[resultIndex] = outputChar;
             resultIndex = resultIndex + 1;
-            prevChar = nil;
+            resultParts[resultIndex] = AS_MirroredBrackets[char1] or char1;
             prevConnectsRight = false;
          else
-            local connectedFromLeft = (prevChar ~= nil) and prevConnectsRight;
+            local connectedFromLeft = prevConnectsRight;
             local currentConnectsRight = false;
 
             if ligatureApplied then
                currentConnectsRight = false;
             elseif AS_IsNonConnecting(char1) then
                currentConnectsRight = false;
-            elseif not isNextSeparator and char2 and AS_Reshaping_Rules[char2] then
+            elseif not isNextSeparator and char2 and rules[char2] then
                currentConnectsRight = true;
-            else
-               currentConnectsRight = false;
             end
 
             local position;
@@ -755,62 +737,52 @@ function AS_UTF8reverse(s)
                position = 0;
             end
 
+            local forms = (ligatureApplied and ligatureForm) or charRules;
             local outputChar;
-            if ligatureApplied and ligatureForm then
+            if forms then
                if position == 0 then
-                  outputChar = ligatureForm.isolated;
+                  outputChar = forms.isolated;
                elseif position == 1 then
-                  outputChar = ligatureForm.initial;
+                  outputChar = forms.initial;
                elseif position == 2 then
-                  outputChar = ligatureForm.middle;
+                  outputChar = forms.middle;
                else
-                  outputChar = ligatureForm.final;
+                  outputChar = forms.final;
                end
             else
-               local rules = AS_Reshaping_Rules[char1];
-               if rules then
-                  if position == 0 then
-                     outputChar = rules.isolated;
-                  elseif position == 1 then
-                     outputChar = rules.initial;
-                  elseif position == 2 then
-                     outputChar = rules.middle;
-                  else
-                     outputChar = rules.final;
-                  end
-               else
-                  outputChar = char1;
-               end
+               outputChar = char1;
             end
 
             if (debug_show_form == 1) then
                outputChar = tostring(position) .. outputChar;
             end
 
-            if attachedDiacritics then
-               for _, diac in ipairs(attachedDiacritics) do
-                  if AS_USE_PRESENTATION_DIACRITICS and AS_DiacriticPresentationForms[diac] then
-                     outputChar = outputChar .. AS_DiacriticPresentationForms[diac];
-                  else
-                     outputChar = outputChar .. diac;
-                  end
+            for diacIndex = index + 1, index2 - 1 do
+               local diac = chars[diacIndex];
+               if AS_USE_PRESENTATION_DIACRITICS and AS_DiacriticPresentationForms[diac] then
+                  outputChar = outputChar .. AS_DiacriticPresentationForms[diac];
+               else
+                  outputChar = outputChar .. diac;
                end
             end
 
-            resultParts[resultIndex] = outputChar;
             resultIndex = resultIndex + 1;
-            prevChar = char1;
+            resultParts[resultIndex] = outputChar;
             prevConnectsRight = currentConnectsRight;
          end
       end
+
+      index = nextIndex;
    end
 
-   local reversed = {};
-   for i = resultIndex - 1, 1, -1 do
-      reversed[#reversed + 1] = resultParts[i];
+   local left, right = 1, resultIndex;
+   while (left < right) do
+      resultParts[left], resultParts[right] = resultParts[right], resultParts[left];
+      left = left + 1;
+      right = right - 1;
    end
 
-   return AS_FixDigitRunsForRTL(table.concat(reversed));
+   return AS_FixDigitRunsForRTL(table.concat(resultParts));
 end
 
 -------------------------------------------------------------------------------------------------------
@@ -846,6 +818,7 @@ local AS_LineCacheN = 0;
 function AS_ReverseAndPrepareLineText(Atext, Awidth, Afont, AfontSize)
    local retstr = "";
    if (Atext and Awidth and AfontSize) then
+      local cacheText = Atext;                                    -- the cache is keyed by the text as it was passed in
       local fontKey = Afont or QTR_Font2 or "";
       local widthKey = math.floor(Awidth + 0.5);
       local fontBucket = AS_LineCache[fontKey];
@@ -854,7 +827,7 @@ function AS_ReverseAndPrepareLineText(Atext, Awidth, Afont, AfontSize)
       if (not sizeBucket) then sizeBucket = {}; fontBucket[AfontSize] = sizeBucket; end
       local widthBucket = sizeBucket[widthKey];
       if (not widthBucket) then widthBucket = {}; sizeBucket[widthKey] = widthBucket; end
-      local cached = widthBucket[Atext];
+      local cached = widthBucket[cacheText];
       if (cached ~= nil) then
          return cached;
       end
@@ -868,69 +841,87 @@ function AS_ReverseAndPrepareLineText(Atext, Awidth, Afont, AfontSize)
       Atext = string.gsub(Atext, " #", "#");
       Atext = string.gsub(Atext, "# ", "#");
       local bytes = strlen(Atext);
-      local pos = 1;
-      local link_start_stop = false;
-      local newstr = "";
-      local nextstr = "";
-      local charbytes;
-      local char1 = "";
-      local char2 = "";
-      local last_space = 0;
-      local measureReady = false;                                 -- width and font only need setting before the first measurement
-      while (pos <= bytes) do                                     -- UWAGA: tekst arabski jest podany wprost, od lewej są poszczególne znaki
-         charbytes = AS_UTF8charbytes(Atext, pos);                -- count of bytes (liczba bajtów znaku)
-         char1 = strsub(Atext, pos, pos + charbytes - 1);         -- pobrany znak litery
-         newstr = newstr .. char1;                                -- dodaję kolejny odczytany znak
-
-         if ((char2 .. char1 == "|r") and (pos < bytes)) then     -- start of the link
-            link_start_stop = true;
-         elseif ((char2 .. char1 == "|c") and (pos < bytes)) then -- end of the link
-            link_start_stop = false;
+      local testText = AS_TestLine.text;
+      local maxHeight = AfontSize * 1.5;                          -- taller than this means the text no longer fits in 1 line
+      local fitsOneLine = false;
+      if (bytes > 0) then
+         testText:SetWidth(Awidth);                               -- set the text width used for wrap measurement
+         testText:SetFont(Afont, AfontSize);
+         -- Most texts (titles, labels, tooltip lines) fit in one line: shape and measure those once
+         if (not string.find(Atext, "#", 1, true)) then
+            retstr = AS_UTF8reverse(Atext);
+            testText:SetText(retstr);
+            fitsOneLine = (testText:GetHeight() <= maxHeight);
          end
-
-         if ((char1 == '#') or ((char1 == " ") and (link_start_stop == false))) then -- mamy spację, nie wewnątrz linku
-            last_space = 0;
-            nextstr = "";
-         else
-            nextstr = nextstr .. char1; -- znaki kolejne po ostatniej spacji
-            last_space = last_space + charbytes;
-         end
-         if (link_start_stop == false) then -- nie jesteśmy wewnątrz linku - można sprawdzać
-            if (not measureReady) then
-               AS_TestLine.text:SetWidth(Awidth);   -- set the text width used for wrap measurement
-               AS_TestLine.text:SetFont(Afont, AfontSize);
-               measureReady = true;
-            end
-            AS_TestLine.text:SetText(AS_UTF8reverse(newstr));
-            if ((char1 == '#') or (AS_TestLine.text:GetHeight() > AfontSize * 1.5)) then -- tekst nie mieści się już w 1 linii
-               newstr = string.sub(newstr, 1, strlen(newstr) - last_space);              -- tekst do ostatniej spacji
-               newstr = string.gsub(newstr, "#", "");
-               retstr = retstr .. AS_UTF8reverse(newstr) .. "\n";
-               newstr = nextstr;
-               nextstr = "";
-            end
-         end
-         char2 = char1; -- zapamiętaj znak, potrzebne w następnej pętli
-         pos = pos + charbytes;
       end
-      retstr = retstr .. AS_UTF8reverse(newstr);
+
+      if (not fitsOneLine) then
+         local pos = 1;
+         local link_start_stop = false;
+         local newstr = "";
+         local nextstr = "";
+         local charbytes;
+         local char1 = "";
+         local char2 = "";
+         local last_space = 0;
+         retstr = "";
+         while (pos <= bytes) do                                  -- UWAGA: tekst arabski jest podany wprost, od lewej są poszczególne znaki
+            charbytes = AS_UTF8charbytes(Atext, pos);             -- count of bytes (liczba bajtów znaku)
+            char1 = strsub(Atext, pos, pos + charbytes - 1);      -- pobrany znak litery
+            newstr = newstr .. char1;                             -- dodaję kolejny odczytany znak
+
+            if ((char2 == "|") and (char1 == "r") and (pos < bytes)) then     -- start of the link
+               link_start_stop = true;
+            elseif ((char2 == "|") and (char1 == "c") and (pos < bytes)) then -- end of the link
+               link_start_stop = false;
+            end
+
+            if ((char1 == '#') or ((char1 == " ") and (link_start_stop == false))) then -- mamy spację, nie wewnątrz linku
+               last_space = 0;
+               nextstr = "";
+            else
+               nextstr = nextstr .. char1; -- znaki kolejne po ostatniej spacji
+               last_space = last_space + charbytes;
+            end
+            if (link_start_stop == false) then -- nie jesteśmy wewnątrz linku - można sprawdzać
+               -- A line overflows once a whole word no longer fits, so it is shaped and measured at the
+               -- end of each word (and at "|", which may start a link) instead of after every character.
+               local lineBreak = (char1 == '#');
+               if (not lineBreak) then
+                  local nextByte = strbyte(Atext, pos + charbytes);
+                  -- A word wider than the whole line has no earlier space to break at, so it stays where it is
+                  if (((nextByte == nil) or (nextByte == 32) or (nextByte == 35) or (char1 == "|")) and (last_space < strlen(newstr))) then
+                     testText:SetText(AS_UTF8reverse(newstr));
+                     lineBreak = (testText:GetHeight() > maxHeight);                 -- tekst nie mieści się już w 1 linii
+                  end
+               end
+               if (lineBreak) then
+                  newstr = string.sub(newstr, 1, strlen(newstr) - last_space);       -- tekst do ostatniej spacji
+                  newstr = string.gsub(newstr, "#", "");
+                  retstr = retstr .. AS_UTF8reverse(newstr) .. "\n";
+                  newstr = nextstr;                                                  -- nextstr keeps matching last_space
+               end
+            end
+            char2 = char1; -- zapamiętaj znak, potrzebne w następnej pętli
+            pos = pos + charbytes;
+         end
+         retstr = retstr .. AS_UTF8reverse(newstr);
+      end
       retstr = string.gsub(retstr, "#", "");
       retstr = string.gsub(retstr, " \n", "\n"); -- space before newline code is useless
       retstr = string.gsub(retstr, "\n ", "\n"); -- space after newline code is useless
 
-      local fontKey = Afont or QTR_Font2 or "";
-      local widthKey = math.floor(Awidth + 0.5);
       if (AS_LineCacheN >= 400) then
          AS_LineCache = {};
          AS_LineCacheN = 0;
       end
-      local fontBucket = AS_LineCache[fontKey];
+      fontBucket = AS_LineCache[fontKey];
       if (not fontBucket) then fontBucket = {}; AS_LineCache[fontKey] = fontBucket; end
-      local sizeBucket = fontBucket[AfontSize];
+      sizeBucket = fontBucket[AfontSize];
       if (not sizeBucket) then sizeBucket = {}; fontBucket[AfontSize] = sizeBucket; end
-      local widthBucket = sizeBucket[widthKey];
+      widthBucket = sizeBucket[widthKey];
       if (not widthBucket) then widthBucket = {}; sizeBucket[widthKey] = widthBucket; end
-      widthBucket[Atext] = retstr;
+      widthBucket[cacheText] = retstr;
       AS_LineCacheN = AS_LineCacheN + 1;
    end
 
